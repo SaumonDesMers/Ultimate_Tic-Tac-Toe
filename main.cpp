@@ -1,14 +1,19 @@
 #include <iostream>
+#include <fstream>
+#include <string>
 #include <vector>
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <cstdlib>
+#include <ctime>
+#include <iomanip>
 
 using namespace std;
 
 typedef vector<vector<int>> Grid;
 
-int StateId = 0;
+int stateId = 0;
 
 int random(int min, int max) {
    static bool first = true;
@@ -18,6 +23,27 @@ int random(int min, int max) {
    }
    return min + rand() % (max - min);
 }
+
+struct Timer {
+	clock_t time_point;
+
+	Timer() {
+		set();
+	}
+
+	void set() {
+		time_point = clock();
+	}
+
+	double diff(bool reset = true) {
+		clock_t next_time_point = clock();
+		clock_t tick_diff = next_time_point - time_point;
+		double diff = (double)(tick_diff) / CLOCKS_PER_SEC * 1000;
+		if (reset)
+			time_point = next_time_point;
+		return diff;
+	}
+} timer;
 
 struct Action {
 	int row; int col;
@@ -35,7 +61,7 @@ struct Action {
 	void set(int _row, int _col) { row = _row; col = _col; }
 	void add(int _row, int _col) { row += _row; col += _col; }
     void add(Action &v) { row += v.row; col += v.col; }
-    string to_str() { return to_string(col) + " " + to_string(row); }
+    string to_str() { return to_string(row) + " " + to_string(col); }
 } npos(-1, -1);
 
 struct Game {
@@ -151,13 +177,13 @@ struct State {
 	int nb_of_visit;
 	Game game;
 	State *parent;
-	vector<State *> childs;
+	vector<State *> children;
 	int id;
 
-	State(Game __game, State *__parent) : value(0), nb_of_visit(0), game(__game), parent(__parent) {}
+	State(Game __game, State *__parent) : value(0), nb_of_visit(0), game(__game), parent(__parent), id(stateId++) {}
 	~State() {
-		for (size_t i = 0; i < childs.size(); i++)
-			delete childs[i];
+		for (size_t i = 0; i < children.size(); i++)
+			delete children[i];
 	}
 
 	State *expand() {
@@ -165,8 +191,8 @@ struct State {
 			return NULL;
 		vector<Action> action = game.possibleActions();
 		for (size_t i = 0; i < action.size(); i++)
-			childs.push_back(new State(game.play(action[i]), this));
-		return childs.size() > 0 ? childs[0] : NULL;
+			children.push_back(new State(game.play(action[i]), this));
+		return children.size() > 0 ? children[0] : NULL;
 	}
 
 	float UCB1() {
@@ -182,11 +208,11 @@ struct State {
 	State *maxUCB1Child() {
 		State *child = NULL;
 		float maxUCB1 = 0;
-		for (size_t i = 0; i < childs.size(); i++) {
-			float UCB1 = childs[i]->UCB1();
+		for (size_t i = 0; i < children.size(); i++) {
+			float UCB1 = children[i]->UCB1();
 			if (UCB1 > maxUCB1) {
 				maxUCB1 = UCB1;
-				child = childs[i];
+				child = children[i];
 			}
 		}
 		return child;
@@ -202,112 +228,216 @@ struct State {
 	float rollout() {
 		Game g = game;
 		while (!g.finish()) {
+			// cerr << "    t1: " << timer.diff() << endl;
 			vector<Action> actions = g.possibleActions();
+			// cerr << "    t2: " << timer.diff() << endl;
+			for (size_t i = 0; i < actions.size(); i++) {
+				Game test = g.play(actions[i]);
+				if (test.finish()) {
+					// cerr << "best play -> " << actions[i].to_str() << endl;
+					// test.log('o', 'x');
+					return test.result();
+				}
+			}
 			int randIndex = random(0, actions.size());
+			// cerr << "    t3: " << timer.diff() << endl;
+			// cerr << "random play -> " << actions[randIndex].to_str() << endl;
 			g = g.play(actions[randIndex]);
+			// g.log('o', 'x');
+			// cerr << "    t4: " << timer.diff() << endl;
+			// g.log('o', 'x');
+			// cerr << endl;
 		}
 		return g.result();
 	}
 
 	State *maxAverageValueChild() {
-		if (childs.empty())
+		if (children.empty())
 			return NULL;
-		State *child = childs[0];
+		State *child = children[0];
 		float maxAverageValue = -1;
-		for (size_t i = 0; i < childs.size(); i++) {
-			float averageValue = childs[i]->value / childs[i]->nb_of_visit;
+		for (size_t i = 0; i < children.size(); i++) {
+			float averageValue = children[i]->value / children[i]->nb_of_visit;
 			if (averageValue > maxAverageValue) {
 				maxAverageValue = averageValue;
-				child = childs[i];
+				child = children[i];
 			}
 		}
 		return child;
 	}
 
 	void log() {
-		cerr << "State{t=" << value << ",\tn=" << nb_of_visit << ",\tav=" << value / nb_of_visit << ",\taction=" << game.lastAction.to_str() << "}" << endl;
+		cerr << "State{t=" << setw(7) << left << value <<
+            ",n=" << setw(5) << left << nb_of_visit <<
+            ",av=" << setw(10) << left << value / nb_of_visit <<
+            ",action=" << game.lastAction.to_str() <<
+            "}" << endl;
 	}
 
 };
 
-State *mcts(State *initialState, int maxIter) {
+void dump_node(State *node, std::ofstream & myfile, int deep) {
+    if (--deep <= 0)
+        return;
+    myfile << '\t' << node->id << "[label=\"[" << node->game.lastAction.to_str() << "]\n"
+    <<"P=" << node->game.turn << "W=" << node->value << ";V=" << node->nb_of_visit<< '\"';
+    // if (isTerminal(node->bigboard))
+    // {
+    //     myfile << " color=\"";
+    //     if (isWin(node->bigboard))
+    //         myfile << "green";
+    //     else if (isLost(node->bigboard))
+    //         myfile << "red";
+    //     else
+    //         myfile << "blue";
+    //     myfile << '\"';
+    // }
+    myfile <<"]\n";
+    for(int i = 0; i < node->children.size(); i++) {
+        myfile << '\t' << node->id << " -> " << node->children[i]->id << std::endl;
+    }
+    for (int i = 0; i < node->children.size(); i++) {
+        dump_node(node->children[i], myfile, deep);
+    }
+}
+
+void dump_tree(std::string fileName, State *root) {
+    std::ofstream myfile;
+	myfile.open(fileName);
+    myfile << "strict digraph {\n";
+    myfile << "\tnode [shape=\"rect\"]\n";
+
+    dump_node(root, myfile, 5);
+
+    myfile << "}";
+    myfile.close();
+}
+
+State *opponentPlay(State *state, Action action) {
+	if (action.row != -1) {
+		for (size_t i = 0; i < state->children.size(); i++) {
+			if (action == state->children[i]->game.lastAction)
+				return state->children[i];
+		}
+	}
+	return state;
+}
+
+State *mcts(State *initialState, Timer start, float timeout) {
 	State *current;
-	while (maxIter--) {
+    int nbOfSimule = 0;
+	while (true) {
+		
+		timer.set();
+        double diff = start.diff(false);
+		// cerr << nbOfSimule << " start: " << diff << endl;
+        if (diff > timeout)
+            break;
+
 		current = initialState;
-		// cerr << "Iteration " << maxIter << endl;
 
-		while (current->childs.size() > 0)
+		while (current->children.size() > 0)
 			current = current->maxUCB1Child();
-
-
+		// cerr << "  go to leaf: " << timer.diff() << endl;
 		if (current->nb_of_visit > 0) {
 			State *firstChild = current->expand();
 			if (firstChild != NULL)
 				current = firstChild;
 		}
-		// cerr << "simule " << current->game.lastAction.to_str() << ":" << endl;
-		// current->game.log('o', 'x');
+		// cerr << "  expand: " << timer.diff() << endl;
 		float value = current->rollout();
-		// cerr << "result = " << value << endl << endl;
+		// cerr << "  rollout: " << timer.diff() << endl;
 		current->backpropagate(value);
+        nbOfSimule++;
+        // cerr << endl;
 	}
+    cerr << "nb of simule = " << nbOfSimule << endl;
 	return initialState->maxAverageValueChild();
 }
 
 int main(int ac, char *av[]) {
 
-	if (ac != 2) {
-		cerr << "Not enough arguments" << endl;
-		return 1;
-	}
-
-	Grid board = {
+	Grid emptyBoard = {
 		{0,0,0},
-		{0,-1,-1},
-		{0,0,1}
+		{0,0,0},
+		{0,0,0}
 	};
 
-	Game game = Game(board, 1, npos);
-	State *state = new State(game, NULL);
+	Game initialGame = Game(emptyBoard, 1, npos);
+	State *initialState = new State(initialGame, NULL);
 
-	game.log('o', 'x');
-	State *child = mcts(state, atoi(av[1]));
-	for (size_t i = 0; i < child->parent->childs.size(); i++)
-		child->parent->childs[i]->log();
-	child->game.log('o', 'x');
+	State *current = initialState;
+	current->expand();
 
-	delete state;
+	current = opponentPlay(current, Action(1, 1));
+	current->game.log('o', 'x');
+	current = mcts(current, Timer(), 75);
+	for (size_t i = 0; i < current->parent->children.size(); i++)
+		current->parent->children[i]->log();
+	current->game.log('o', 'x');
 
+	// current = opponentPlay(current, Action(0, 0));
+	// current->game.log('o', 'x');
+	// current = mcts(current, Timer(), 75);
+	// for (size_t i = 0; i < current->parent->children.size(); i++)
+	// 	current->parent->children[i]->log();
+	// current->game.log('o', 'x');
 
-	// Grid emptyBoard = {
-	// 	{0,0,0},
-	// 	{0,0,0},
-	// 	{0,0,0}
-	// };
-
-	// Game initialGame = Game(emptyBoard, 1, npos);
-	// State *initialState = new State(initialGame, NULL);
-
-	// State *current = initialState;
-	// while (!current->game.finish()) {
-
-	// 	current = mcts(current, atoi(av[1]));
-	// 	if (!current) {
-	// 		cerr << "current = NULL" << endl;
-	// 		break;
-	// 	}
-	// 	for (size_t i = 0; i < current->parent->childs.size(); i++)
-	// 		current->parent->childs[i]->log();
-	// 	current->game.log('o', 'x');
-	// 	cerr << endl;
-
-	// 	current->game.inverse();
-	// 	State *nextState = new State(current->game, NULL);
-	// 	delete current->parent;
-	// 	current = nextState;
-	// }
-
-	// delete current;
-
+	delete initialState;
 	return 0;
 }
+
+// int main() {
+//     Grid emptyBoard = {{0,0,0},{0,0,0},{0,0,0}};
+
+// 	Game initialGame = Game(emptyBoard, 1, npos);
+// 	State *initialState = new State(initialGame, NULL);
+
+//     State *current = initialState;
+//     current->expand();
+//     while (1) {
+//         int opponent_row; int opponent_col;
+//         cin >> opponent_row >> opponent_col; cin.ignore();
+//         Action opponentAction(opponent_row, opponent_col);
+//         // int valid_action_count;
+//         // cin >> valid_action_count; cin.ignore();
+//         vector<Action> validAction;
+//         // for (int i = 0; i < valid_action_count; i++) {
+//         //     int row; int col;
+//         //     cin >> row >> col; cin.ignore();
+//         //     validAction.push_back(Action(row, col));
+//         // }
+
+//         Timer start;
+
+// 		current = opponentPlay(current, opponentAction);
+
+//         current->game.log('o', 'x');
+//         cerr << endl;
+
+// 		Game newGame = current->game;
+// 		delete current;
+// 		current = new State(newGame, NULL);
+
+//         // my play
+//         State *child = mcts(current, start, 75);
+
+// 		// dump_tree("tree.dot", current);
+
+//         cerr << "simule time " << start.diff() << endl;
+
+//         for (size_t i = 0; i < current->children.size(); i++)
+//             current->children[i]->log();
+        
+//         if (child == NULL) {
+//             cerr << "mcts did not return any action" << endl;
+//             cout << validAction[0].to_str() << endl;
+//         }
+//         else {
+//             cout << child->game.lastAction.to_str() << endl;
+//             current = child;
+//         }
+//         current->game.log('o', 'x');
+//         cerr << endl;
+//     }
+// }

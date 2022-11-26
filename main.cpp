@@ -27,13 +27,9 @@ int random(int min, int max) {
 struct Timer {
 	clock_t time_point;
 
-	Timer() {
-		set();
-	}
+	Timer() { set(); }
 
-	void set() {
-		time_point = clock();
-	}
+	void set() { time_point = clock(); }
 
 	double diff(bool reset = true) {
 		clock_t next_time_point = clock();
@@ -59,8 +55,6 @@ struct Action {
 	bool operator==(Action const &src) const { return row == src.row && col == src.col; }
 	bool operator!=(Action const &src) const { return !(*this == src); }
 	void set(int _row, int _col) { row = _row; col = _col; }
-	void add(int _row, int _col) { row += _row; col += _col; }
-    void add(Action &v) { row += v.row; col += v.col; }
     string to_str() { return to_string(row) + " " + to_string(col); }
 } npos(-1, -1);
 
@@ -106,7 +100,7 @@ struct Game {
 		return game;
 	}
 
-	bool finish() {
+	bool final() {
 		if (nbPossibleActions() == 0)
 			return true;
 		return playerWin();
@@ -162,11 +156,13 @@ struct Game {
 		turn = turn == 1 ? -1 : 1;
 	}
 
-	void log(char me, char notme) {
+	void log() {
 		for (int row = 0; row < 3; row++) {
 			for (int col = 0; col < 3; col++) {
-				cerr << (board[row][col] == 0 ? '.' : board[row][col] == 1 ? me : notme) << " ";
+				cerr << (board[row][col] == 0 ? '.' : board[row][col] == 1 ? 'o' : 'x') << " ";
 			}
+			if (row == 1)
+				cerr << " next " << (turn == 1 ? 'o' : 'x');
 			cerr << endl;
 		}
 	}
@@ -187,12 +183,37 @@ struct State {
 	}
 
 	State *expand() {
-		if (game.finish())
-			return NULL;
+		// if final state return current state
+		if (game.final())
+			return this;
+
+		// get all valid action
 		vector<Action> action = game.possibleActions();
+
+		// create games for each valid action
+		vector<Game> nextGame;
 		for (size_t i = 0; i < action.size(); i++)
-			children.push_back(new State(game.play(action[i]), this));
-		return children.size() > 0 ? children[0] : NULL;
+			nextGame.push_back(game.play(action[i]));
+		
+		// detect if there is a final state
+		Game *finalGame = NULL;
+		for (size_t i = 0; i < nextGame.size(); i++) {
+			if (nextGame[i].final()) {
+				finalGame = &nextGame[i];
+				break;
+			}
+		}
+
+		// if there is a final state: expand only this one
+		if (finalGame != NULL) {
+			children.push_back(new State(*finalGame, this));
+		}
+		// else: expand all next state
+		else {
+			for (size_t i = 0; i < nextGame.size(); i++)
+				children.push_back(new State(nextGame[i], this));
+		}
+		return children[0];
 	}
 
 	float UCB1() {
@@ -225,28 +246,27 @@ struct State {
 			parent->backpropagate(__value);
 	}
 
-	float rollout() {
+	float rollout(bool debug = false) {
 		Game g = game;
-		while (!g.finish()) {
-			// cerr << "    t1: " << timer.diff() << endl;
+		while (!g.final()) {
 			vector<Action> actions = g.possibleActions();
-			// cerr << "    t2: " << timer.diff() << endl;
 			for (size_t i = 0; i < actions.size(); i++) {
 				Game test = g.play(actions[i]);
-				if (test.finish()) {
-					// cerr << "best play -> " << actions[i].to_str() << endl;
-					// test.log('o', 'x');
+				if (test.final()) {
+					if (debug) {
+						cerr << "best play -> " << actions[i].to_str() << endl;
+						test.log();
+					}
 					return test.result();
 				}
 			}
 			int randIndex = random(0, actions.size());
-			// cerr << "    t3: " << timer.diff() << endl;
-			// cerr << "random play -> " << actions[randIndex].to_str() << endl;
 			g = g.play(actions[randIndex]);
-			// g.log('o', 'x');
-			// cerr << "    t4: " << timer.diff() << endl;
-			// g.log('o', 'x');
-			// cerr << endl;
+			if (debug) {
+				cerr << "random play -> " << actions[randIndex].to_str() << endl;
+				g.log();
+				cerr << endl;
+			}
 		}
 		return g.result();
 	}
@@ -314,130 +334,179 @@ void dump_tree(std::string fileName, State *root) {
 }
 
 State *opponentPlay(State *state, Action action) {
-	if (action.row != -1) {
-		for (size_t i = 0; i < state->children.size(); i++) {
-			if (action == state->children[i]->game.lastAction)
-				return state->children[i];
-		}
+	for (size_t i = 0; i < state->children.size(); i++) {
+		if (action == state->children[i]->game.lastAction)
+			return state->children[i];
 	}
 	return state;
+}
+
+void readInput(Action &opponentAction, vector<Action> &validAction) {
+	int opponent_row; int opponent_col;
+	cin >> opponent_row >> opponent_col; cin.ignore();
+	opponentAction.set(opponent_row, opponent_col);
+	validAction.clear();
+	// int valid_action_count;
+	// cin >> valid_action_count; cin.ignore();
+	// for (int i = 0; i < valid_action_count; i++) {
+	//     int row; int col;
+	//     cin >> row >> col; cin.ignore();
+	//     validAction.push_back(Action(row, col));
+	// }
 }
 
 State *mcts(State *initialState, Timer start, float timeout) {
 	State *current;
     int nbOfSimule = 0;
+
+	// if (initialState->children.empty())
+	// 	initialState->expand();
 	while (true) {
 		
-		timer.set();
         double diff = start.diff(false);
-		// cerr << nbOfSimule << " start: " << diff << endl;
         if (diff > timeout)
             break;
 
 		current = initialState;
 
-		while (current->children.size() > 0)
+		while (!current->children.empty())
 			current = current->maxUCB1Child();
-		// cerr << "  go to leaf: " << timer.diff() << endl;
+
 		if (current->nb_of_visit > 0) {
 			State *firstChild = current->expand();
 			if (firstChild != NULL)
 				current = firstChild;
 		}
-		// cerr << "  expand: " << timer.diff() << endl;
+
 		float value = current->rollout();
-		// cerr << "  rollout: " << timer.diff() << endl;
+
 		current->backpropagate(value);
+
         nbOfSimule++;
-        // cerr << endl;
 	}
     cerr << "nb of simule = " << nbOfSimule << endl;
 	return initialState->maxAverageValueChild();
 }
 
-int main(int ac, char *av[]) {
+State *mcts(State *initialState, int maxIter) {
+	State *current;
+    int nbOfSimule = 0;
 
-	Grid emptyBoard = {
-		{0,0,0},
-		{0,0,0},
-		{0,0,0}
-	};
+	// if (initialState->children.empty())
+	// 	initialState->expand();
+	while (nbOfSimule < maxIter) {
 
-	Game initialGame = Game(emptyBoard, 1, npos);
-	State *initialState = new State(initialGame, NULL);
+		current = initialState;
 
-	State *current = initialState;
-	current->expand();
+		while (!current->children.empty())
+			current = current->maxUCB1Child();
 
-	current = opponentPlay(current, Action(1, 1));
-	current->game.log('o', 'x');
-	current = mcts(current, Timer(), 75);
-	for (size_t i = 0; i < current->parent->children.size(); i++)
-		current->parent->children[i]->log();
-	current->game.log('o', 'x');
+		if (current->nb_of_visit > 0) {
+			current = current->expand();
+		}
 
-	// current = opponentPlay(current, Action(0, 0));
-	// current->game.log('o', 'x');
-	// current = mcts(current, Timer(), 75);
-	// for (size_t i = 0; i < current->parent->children.size(); i++)
-	// 	current->parent->children[i]->log();
-	// current->game.log('o', 'x');
+		float value = current->rollout();
 
-	delete initialState;
-	return 0;
+		current->backpropagate(value);
+
+        nbOfSimule++;
+	}
+    cerr << "nb of simule = " << nbOfSimule << endl;
+	return initialState->maxAverageValueChild();
 }
 
-// int main() {
-//     Grid emptyBoard = {{0,0,0},{0,0,0},{0,0,0}};
+void rolloutTest(Grid board) {
+	cerr << "--- rollout test ---" << endl;
+	Game game = Game(board, 1, npos);
+	State *state = new State(game, NULL);
 
-// 	Game initialGame = Game(emptyBoard, 1, npos);
-// 	State *initialState = new State(initialGame, NULL);
+	state->game.log();
+	cerr << endl;
 
-//     State *current = initialState;
-//     current->expand();
-//     while (1) {
-//         int opponent_row; int opponent_col;
-//         cin >> opponent_row >> opponent_col; cin.ignore();
-//         Action opponentAction(opponent_row, opponent_col);
-//         // int valid_action_count;
-//         // cin >> valid_action_count; cin.ignore();
-//         vector<Action> validAction;
-//         // for (int i = 0; i < valid_action_count; i++) {
-//         //     int row; int col;
-//         //     cin >> row >> col; cin.ignore();
-//         //     validAction.push_back(Action(row, col));
-//         // }
+	float val = state->rollout(true);
+	cerr << "\nvalue = " << val << endl;
+	delete state;
+	cerr << "--------------------" << endl;
+}
 
-//         Timer start;
+void mctsTest(Grid board) {
+	cerr << "---- mcts  test ----" << endl;
+	Game game = Game(board, 1, npos);
+	State *state = new State(game, NULL);
 
-// 		current = opponentPlay(current, opponentAction);
+	state->game.log();
+	cerr << endl;
 
-//         current->game.log('o', 'x');
-//         cerr << endl;
+	State *child = mcts(state, 1000);
 
-// 		Game newGame = current->game;
-// 		delete current;
-// 		current = new State(newGame, NULL);
+	for (size_t i = 0; i < state->children.size(); i++)
+		state->children[i]->log();
+	child->game.log();
+	delete state;
+	cerr << "--------------------" << endl;
+}
 
-//         // my play
-//         State *child = mcts(current, start, 75);
+// int main(int ac, char *av[]) {
 
-// 		// dump_tree("tree.dot", current);
+// 	Grid board = {
+// 		{1,0,0},
+// 		{0,-1,0},
+// 		{0,-1,0}
+// 	};
 
-//         cerr << "simule time " << start.diff() << endl;
+// 	rolloutTest(board);
+// 	mctsTest(board);
 
-//         for (size_t i = 0; i < current->children.size(); i++)
-//             current->children[i]->log();
-        
-//         if (child == NULL) {
-//             cerr << "mcts did not return any action" << endl;
-//             cout << validAction[0].to_str() << endl;
-//         }
-//         else {
-//             cout << child->game.lastAction.to_str() << endl;
-//             current = child;
-//         }
-//         current->game.log('o', 'x');
-//         cerr << endl;
-//     }
+// 	return 0;
 // }
+
+int main() {
+	int step = 0;
+
+	Action opponentAction;
+	vector<Action> validAction;
+
+	Game initialGame = Game({{0,0,0},{0,0,0},{0,0,0}}, 1, npos);
+	State *initialState = new State(initialGame, NULL);
+
+    State *current = initialState;
+
+    while (1) {
+		readInput(opponentAction, validAction);
+        Timer start;
+
+		if (step == 0) {
+			if (opponentAction.row != -1) {
+				current->game.board[opponentAction.row][opponentAction.col] = -1;
+			}
+		}
+		else {
+			current = opponentPlay(current, opponentAction);
+		}
+
+        current->game.log();
+        cerr << endl;
+
+        // my play
+        State *child = mcts(current, start, 75);
+
+		// dump_tree("tree.dot", current);
+
+        cerr << "simule time " << start.diff() << endl;
+
+        for (size_t i = 0; i < current->children.size(); i++)
+            current->children[i]->log();
+        
+        if (child == NULL) {
+            cerr << "mcts did not return any action" << endl;
+            cout << validAction[0].to_str() << endl;
+        }
+        else {
+            cout << child->game.lastAction.to_str() << endl;
+            current = child;
+        }
+        current->game.log();
+        cerr << endl;
+		step++;
+    }
+}

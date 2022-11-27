@@ -8,7 +8,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <iomanip>
-#include <bitset>
+#include <cstring>
 
 #define int128(x) static_cast<__int128_t>(x)
 #define FULL_ONE_MASK ((int128(0x1ffffffffff) << 40) | int128(0xffffffffff))
@@ -32,7 +32,7 @@ typedef __int16_t BigBoard;
 	 6  7  8 | 15 16 17 | 24 25 26
 	---------|----------|---------
 	27 28 29 | 36 37 38 | 45 46 47
-	30 31 32 | 39 40 41 | 48 59 50
+	30 31 32 | 39 40 41 | 48 49 50
 	33 34 35 | 42 43 44 | 51 52 53
 	---------|----------|---------
 	54 55 56 | 63 64 65 | 72 73 74
@@ -56,6 +56,19 @@ typedef __int16_t BigBoard;
 	CFI = 100100100 = 0x124
 	AEI = 100010001 = 0x111
 	CEG = 001010100 = 0x54
+
+
+	o o o | . . . | . . .
+	o   o | . . . | . . .
+	o o o | . . . | . . .
+	------|-------|------
+	. . . | x   x | . . .
+	. . . |   x   | . . .
+	. . . | x   x | . . .
+	------|-------|------
+	. . . | . . . | . . .
+	. . . | . . . | . . .
+	. . . | . . . | . . .
 
 */
 
@@ -116,7 +129,7 @@ int posToIndex[9][9] = {
 	{ 3,  4,  5, 12, 13, 14, 21, 22, 23},
 	{ 6,  7,  8, 15, 16, 17, 24, 25, 26},
 	{27, 28, 29, 36, 37, 38, 45, 46, 47},
-	{30, 31, 32, 39, 40, 41, 48, 59, 50},
+	{30, 31, 32, 39, 40, 41, 48, 49, 50},
 	{33, 34, 35, 42, 43, 44, 51, 52, 53},
 	{54, 55, 56, 63, 64, 65, 72, 73, 74},
 	{57, 58, 59, 66, 67, 68, 75, 76, 77},
@@ -127,6 +140,8 @@ template<class Mask>
 string mtos(Mask mask, size_t size) {
 	string str;
 	for (size_t i = 0; i < size; i++) {
+		if (i % 9 == 0)
+			str.insert(0, " ");
 		str.insert(0, to_string(int(mask & 1)));
 		mask >>= 1;
 	}
@@ -138,40 +153,51 @@ struct Game {
 	BigBoard oppBigBoard;
 	Board myBoard;
 	Board oppBoard;
+	Board nonFreeCell;
 	int myTurn;
 	int lastAction;
-	vector<int> validAction;
-	int validActionAlreadyComputed;
+	int validAction[81];
+	int validActionCount;
+	int validActionComputed;
 
 	Game(BigBoard _myBigBoard, BigBoard _oppBigBoard, Board _myBoard, Board _oppBoard, int _myTurn, int _lastAction) :
 		myBigBoard(_myBigBoard),
 		oppBigBoard(_oppBigBoard),
 		myBoard(_myBoard),
 		oppBoard(_oppBoard),
+		nonFreeCell(0),
 		myTurn(_myTurn),
 		lastAction(_lastAction),
-		validAction(vector<int>()),
-		validActionAlreadyComputed(false) {}
+		validActionCount(0),
+		validActionComputed(false) {}
 
 	Game(const Game &src) :
 		myBigBoard(src.myBigBoard),
 		oppBigBoard(src.oppBigBoard),
 		myBoard(src.myBoard),
 		oppBoard(src.oppBoard),
+		nonFreeCell(src.nonFreeCell),
 		myTurn(src.myTurn),
 		lastAction(src.lastAction),
-		validAction(src.validAction),
-		validActionAlreadyComputed(src.validActionAlreadyComputed) {}
+		validActionCount(src.validActionCount),
+		validActionComputed(src.validActionComputed) {
+
+			for (size_t i = 0; i < validActionCount; i++)
+				validAction[i] = src.validAction[i];
+		}
 
 	Game &operator=(const Game &src) {
 		myBigBoard = src.myBigBoard;
 		oppBigBoard = src.oppBigBoard;
 		myBoard = src.myBoard;
 		oppBoard = src.oppBoard;
+		nonFreeCell = src.nonFreeCell;
 		myTurn = src.myTurn;
 		lastAction = src.lastAction;
-		validAction = src.validAction;
-		validActionAlreadyComputed = src.validActionAlreadyComputed;
+		validActionCount = src.validActionCount;
+		validActionComputed = src.validActionComputed;
+		for (size_t i = 0; i < validActionCount; i++)
+				validAction[i] = src.validAction[i];
 		return *this;
 	}
 
@@ -200,39 +226,32 @@ struct Game {
 		return 0;
 	}
 
-	vector<int> possibleActions() {
-		if (!validActionAlreadyComputed) {
-			validAction.reserve(81);
+	int *getValidAction() {
+		if (!validActionComputed) {
 
 			Board freeCellMask = 0;
-			// set all finished small board to 1 as you can't play on it anymore
-			// starting from the last one
-			for (ssize_t i = 8; i >= 0; i--) {
-				if (isSmallBoardFinal(i)) {
-					freeCellMask &= 0x1ff; // add 111111111 to the right
-				}
-				freeCellMask <<= 9;
-			}
+			
 			// cumule finished small board with the two players board
-			freeCellMask = ~(freeCellMask | myBoard | oppBoard);
+			freeCellMask = ~(nonFreeCell | myBoard | oppBoard);
 
 			// get valid action by filtering only the free cells in the small board where you are forced to play
 			// but if there is no last action: juste play in the middle
 			Board validActionMask = (freeCellMask & (lastAction == -1 ? int128(1) << 40 : smallBoardMask(lastAction % 9)));
 
 			// if there is no valid action: play where you want
-			validActionMask = validActionMask ? validActionMask : freeCellMask;
+			validActionMask = (validActionMask ? validActionMask : freeCellMask) & FULL_ONE_MASK;
 
 			int index = 0;
+			validActionCount = 0;
 			// loop while there is still a 1 (i.e. a free space)
 			while (validActionMask) {
 				if (validActionMask & 1)
-					validAction.push_back(index);
+					validAction[validActionCount++] = index;
 				validActionMask >>= 1;
 				index++;
 			}
 
-			validActionAlreadyComputed = true;
+			validActionComputed = true;
 		}
 		return validAction;
 	}
@@ -240,28 +259,34 @@ struct Game {
 	void play(int action) {
 		Board actionMask = (int128(1) << action);
 		int smallBoardIndex = action / 9;
+
+		nonFreeCell |= actionMask;
 		if (myTurn) {
 			myBoard |= actionMask;
 			int result = boardIsFinal(getUniqueSmallBoard(myBoard, smallBoardIndex));
-			myBigBoard |= result << smallBoardIndex;
+			if (result) {
+				myBigBoard |= result << smallBoardIndex;
+				nonFreeCell |= smallBoardMask(smallBoardIndex);
+			}
 		}
 		else {
 			oppBoard |= actionMask;
 			int result = boardIsFinal(getUniqueSmallBoard(oppBoard, smallBoardIndex));
-			oppBigBoard |= result << smallBoardIndex;
+			if (result) {
+				oppBigBoard |= result << smallBoardIndex;
+				nonFreeCell |= smallBoardMask(smallBoardIndex);
+			}
 		}
 
 		myTurn = !myTurn;
 		lastAction = action;
-		validAction.clear();
-		validActionAlreadyComputed = false;
+		validActionCount = 0;
+		validActionComputed = false;
 	}
 
 	bool final() {
-		possibleActions();
-		if (validAction.empty())
-			return true;
-		return boardIsFinal(myBigBoard) || boardIsFinal(oppBigBoard);
+		getValidAction();
+		return validActionCount == 0 || boardIsFinal(myBigBoard) || boardIsFinal(oppBigBoard);
 	}
 
 	float result() {
@@ -290,7 +315,19 @@ struct Game {
 		Board oppBoardTmp = oppBoard;
 		for (size_t i = 0; i < 81; i++) {
 
-			if (myBoardTmp & 1)
+			if ((myBigBoard >> (i / 9)) & 1) {
+				if (i % 9 != 4)
+					str[gameIndexToStrIndex[i]] = 'o';
+				else
+					str[gameIndexToStrIndex[i]] = ' ';
+			}
+			else if ((oppBigBoard >> (i / 9)) & 1) {
+				if (i % 9 == 0 || i % 9 == 2 || i % 9 == 4|| i % 9 == 6 || i % 9 == 8)
+					str[gameIndexToStrIndex[i]] = 'x';
+				else
+					str[gameIndexToStrIndex[i]] = ' ';
+			}
+			else if (myBoardTmp & 1)
 				str[gameIndexToStrIndex[i]] = 'o';
 			else if (oppBoardTmp & 1)
 				str[gameIndexToStrIndex[i]] = 'x';
@@ -323,11 +360,11 @@ struct State {
 			return this;
 
 		// get all valid action
-		vector<int> action = game.possibleActions();
+		int *action = game.getValidAction();
 
 		// create games for each valid action
 		vector<Game> nextGame;
-		for (size_t i = 0; i < action.size(); i++) {
+		for (size_t i = 0; i < game.validActionCount; i++) {
 			Game g = game;
 			g.play(action[i]);
 			nextGame.push_back(g);
@@ -387,25 +424,15 @@ struct State {
 	float rollout(bool debug = false) {
 		Game g = game;
 		while (!g.final()) {
-			vector<int> actions = g.possibleActions();
-			for (size_t i = 0; i < actions.size(); i++) {
-				Game test = g;
-				test.play(actions[i]);
-				if (test.final()) {
-					if (debug) {
-						std::cerr << "best play -> " << indexToPos[actions[i]] << endl;
-						test.log();
-					}
-					return test.result();
-				}
-			}
-			int randIndex = random(0, actions.size());
-			g.play(actions[randIndex]);
-			if (debug) {
-				std::cerr << "random play -> " << indexToPos[actions[randIndex]] << endl;
-				g.log();
-				std::cerr << endl;
-			}
+			int *validAction = g.getValidAction();
+			// for (size_t i = 0; i < g.validActionCount; i++) {
+			// 	Game test = g;
+			// 	test.play(validAction[i]);
+			// 	if (test.final())
+			// 		return test.result();
+			// }
+			int randIndex = random(0, g.validActionCount);
+			g.play(validAction[randIndex]);
 		}
 		return g.result();
 	}
@@ -466,29 +493,39 @@ State *opponentPlay(State *state, int action) {
 		if (action == state->children[i]->game.lastAction)
 			return state->children[i];
 	}
+	cerr << "Invalid action" << endl;
+	for (size_t i = 0; i < state->children.size(); i++) {
+		cerr << state->children[i]->game.lastAction << " ";
+	}
+	cerr << endl;
+	exit(1);
 	return state;
 }
 
-void readInput(int &oppAction, vector<int> &validAction) {
+void readInput(int &oppAction, int *validAction) {
 	int opp_row; int opp_col;
 	cin >> opp_row >> opp_col; cin.ignore();
 	oppAction = opp_row != -1 ? posToIndex[opp_row][opp_col] : -1;
-	// validAction.clear();
-	// int valid_action_count;
-	// cin >> valid_action_count; cin.ignore();
-	// for (int i = 0; i < valid_action_count; i++) {
-	//     int row; int col;
-	//     cin >> row >> col; cin.ignore();
-	//     validAction.push_back(posToIndex[row][col]);
-	// }
+
+	int valid_action_count;
+	cin >> valid_action_count; cin.ignore();
+	for (int i = 0; i < valid_action_count; i++) {
+	    int row; int col;
+	    cin >> row >> col; cin.ignore();
+	    validAction[i] = posToIndex[row][col];
+	}
+}
+
+void generateInput(State *current, int &oppAction, int *validAction) {
+	validAction = current->game.getValidAction();
+	int randIndex = random(0, current->game.validActionCount);
+	oppAction = validAction[randIndex];
 }
 
 State *mcts(State *initialState, Timer start, float timeout) {
 	State *current;
     int nbOfSimule = 0;
 
-	// if (initialState->children.empty())
-	// 	initialState->expand();
 	while (true) {
 		
         double diff = start.diff(false);
@@ -497,14 +534,12 @@ State *mcts(State *initialState, Timer start, float timeout) {
 
 		current = initialState;
 
+		timer.set();
 		while (!current->children.empty())
 			current = current->maxUCB1Child();
 
-		if (current->nb_of_visit > 0) {
-			State *firstChild = current->expand();
-			if (firstChild != NULL)
-				current = firstChild;
-		}
+		if (current->nb_of_visit > 0)
+			current = current->expand();
 
 		float value = current->rollout();
 
@@ -520,8 +555,6 @@ State *mcts(State *initialState, int maxIter) {
 	State *current;
     int nbOfSimule = 0;
 
-	// if (initialState->children.empty())
-	// 	initialState->expand();
 	while (nbOfSimule < maxIter) {
 
 		current = initialState;
@@ -529,9 +562,8 @@ State *mcts(State *initialState, int maxIter) {
 		while (!current->children.empty())
 			current = current->maxUCB1Child();
 
-		if (current->nb_of_visit > 0) {
+		if (current->nb_of_visit > 0)
 			current = current->expand();
-		}
 
 		float value = current->rollout();
 
@@ -543,73 +575,50 @@ State *mcts(State *initialState, int maxIter) {
 	return initialState->maxAverageValueChild();
 }
 
-/*
-void rolloutTest(Grid board) {
-	cerr << "--- rollout test ---" << endl;
-	Game game = Game(board, 1, npos);
-	State *state = new State(game, NULL);
-
-	state->game.log();
-	cerr << endl;
-
-	float val = state->rollout(true);
-	cerr << "\nvalue = " << val << endl;
-	delete state;
-	cerr << "--------------------" << endl;
-}
-
-void mctsTest(Grid board) {
-	cerr << "---- mcts  test ----" << endl;
-	Game game = Game(board, 1, npos);
-	State *state = new State(game, NULL);
-
-	state->game.log();
-	cerr << endl;
-
-	State *child = mcts(state, 1000);
-
-	for (size_t i = 0; i < state->children.size(); i++)
-		state->children[i]->log();
-	child->game.log();
-	delete state;
-	cerr << "--------------------" << endl;
-}*/
-
 int main(int ac, char *av[]) {
 
 	Game game = Game(0, 0, 0, 0, 0, -1);
+	State *state = new State(game, NULL);
 
-	// game.play(9);
+	Timer start;
 
-	game.log();
+	State *child = mcts(state, start, 1000);
 
-	vector<int> validAction = game.possibleActions();
-	for (size_t i = 0; i < validAction.size(); i++)
-		cerr << "(" << validAction[i] << ") ";
-	cerr << endl;
+	cerr << "Simulation time = " << start.diff() << endl;
 
+	child->game.log();
+
+	delete state;
 	return 0;
 }
 
 // int main() {
-// 	int step = 0;
-
 // 	int oppAction;
-// 	vector<int> validAction;
+// 	int validAction[81];
 
-// 	Game initialGame = Game(0, 0, 0, 0, 1, -1);
+// 	Game initialGame = Game(0, 0, 0, 0, 0, -1);
 // 	State *initialState = new State(initialGame, NULL);
 
 //     State *current = initialState;
 
+// 	int first = true;
 //     while (1) {
+
+// 		if (current->game.final()) {
+// 			cerr << "result = " << current->game.result() << endl;
+// 			delete initialState;
+// 			return 0;
+// 		}
+
 // 		readInput(oppAction, validAction);
+// 		// generateInput(current, oppAction, validAction);
 //         Timer start;
 
-// 		if (step == 0) {
-// 			if (oppAction != -1) {
-// 				current->game.oppBoard &= 1 << oppAction;
-// 			}
+// 		if (first) {
+// 			if (oppAction != -1)
+// 				current->game.play(oppAction);
+// 			else
+// 				current->game.myTurn = 1;
 // 		}
 // 		else {
 // 			current = opponentPlay(current, oppAction);
@@ -619,18 +628,14 @@ int main(int ac, char *av[]) {
 //         cerr << endl;
 
 //         // my play
-//         State *child = mcts(current, start, 75);
-
-// 		// dump_tree("tree.dot", current);
+//         State *child = mcts(current, start, first ? 900 : 75);
 
 //         cerr << "simule time " << start.diff() << endl;
-
-//         for (size_t i = 0; i < current->children.size(); i++)
-//             current->children[i]->log();
         
 //         if (child == NULL) {
 //             cerr << "mcts did not return any action" << endl;
 //             cout << indexToPos[validAction[0]] << endl;
+// 			current = opponentPlay(current, validAction[0]);
 //         }
 //         else {
 //             cout << indexToPos[child->game.lastAction] << endl;
@@ -638,6 +643,6 @@ int main(int ac, char *av[]) {
 //         }
 //         current->game.log();
 //         cerr << endl;
-// 		step++;
+// 		first = false;
 //     }
 // }

@@ -13,7 +13,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <vector>
+// #include <vector>
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -143,9 +143,15 @@ const int posToIndex[9][9] = {
 };
 
 uint_fast8_t int128_ffs(__int128_t n) {
-	const uint_fast8_t cnt_lo = __builtin_ffsll(n >> 64);
-	const uint_fast8_t cnt_hi = __builtin_ffsll(n);
+	const uint_fast8_t cnt_hi = __builtin_ffsll(n >> 64);
+	const uint_fast8_t cnt_lo = __builtin_ffsll(n);
 	return cnt_lo ? cnt_lo : cnt_hi;
+}
+
+uint_fast8_t int128_popcount(__int128_t n) {
+	const uint_fast8_t cnt_hi = __builtin_popcountll(n >> 64);
+	const uint_fast8_t cnt_lo = __builtin_popcountll(n);
+	return cnt_lo + cnt_hi;
 }
 
 template<class Mask>
@@ -166,9 +172,9 @@ struct Game {
 	Mask128 myBoard;
 	Mask128 oppBoard;
 	Mask128 nonFreeCell;
+	Mask128 validAction;
 	int myTurn;
 	int lastAction;
-	int validAction[81];
 	int validActionCount;
 	int validActionComputed;
 	int depth;
@@ -193,15 +199,12 @@ struct Game {
 		myBoard(src.myBoard),
 		oppBoard(src.oppBoard),
 		nonFreeCell(src.nonFreeCell),
+		validAction(src.validAction),
 		myTurn(src.myTurn),
 		lastAction(src.lastAction),
 		validActionCount(src.validActionCount),
 		validActionComputed(src.validActionComputed),
-		depth(src.depth) {
-
-			for (size_t i = 0; i < validActionCount; i++)
-				validAction[i] = src.validAction[i];
-		}
+		depth(src.depth) {}
 
 	Game &operator=(const Game &src) {
 		myBigBoard = src.myBigBoard;
@@ -209,13 +212,12 @@ struct Game {
 		myBoard = src.myBoard;
 		oppBoard = src.oppBoard;
 		nonFreeCell = src.nonFreeCell;
+		validAction = src.validAction;
 		myTurn = src.myTurn;
 		lastAction = src.lastAction;
 		validActionCount = src.validActionCount;
 		validActionComputed = src.validActionComputed;
 		depth = src.depth;
-		for (size_t i = 0; i < validActionCount; i++)
-				validAction[i] = src.validAction[i];
 		return *this;
 	}
 
@@ -224,6 +226,10 @@ struct Game {
 	Mask128 smallBoardMask(int i) { return (int128(0x1ff) << (i * 9)); }
 
 	bool isSmallBoardFinal(int i) { return (((myBigBoard | oppBigBoard) >> i) & 1); }
+
+	int firstActionIndex(Mask128 mask) { return int128_ffs(validAction) - 1; }
+
+	bool actionIsValid(int action) { return validAction & (int128(1) << action); }
 
 	template<class Mask>
 	int boardIsFinal(Mask board) {
@@ -247,34 +253,69 @@ struct Game {
 
 		// get valid action by filtering only the free cells in the small board where you are forced to play
 		// but if there is no last action: juste play in the middle
-		Mask128 validActionMask = (freeCellMask & (lastAction == -1 ? int128(1) << 40 : smallBoardMask(lastAction % 9)));
+		validAction = (freeCellMask & (lastAction == -1 ? int128(1) << 40 : smallBoardMask(lastAction % 9)));
 
 		// if there is no valid action: play where you want
-		validActionMask = (validActionMask ? validActionMask : freeCellMask) & fullOneMask;
-		// work only in C
-		// validActionMask = __builtin_choose_expr(validActionMask, validActionMask, freeCellMask) & FULL_ONE_MASK;
+		validAction = (validAction ? validAction : freeCellMask) & fullOneMask;
 
-		// get ride of all trailing zero
-		uint_fast8_t tz = int128_ffs(validActionMask) - 1;
-		validActionMask >>= tz;
-		int index = tz;
-		validActionCount = 0;
-		// loop while there is still a 1 (i.e. a free space)
-		while (validActionMask) {
-			if (validActionMask & 1)
-				validAction[validActionCount++] = index;
-			validActionMask >>= 1;
-			index++;
-		}
+		validActionCount = int128_popcount(validAction);
 		validActionComputed = true;
 	}
 
+	int getActionList(int actionList[81]) {
+		int action = firstActionIndex(validAction);
+		Mask128 validActionMask = validAction >> action;
+		int i = 0;
+		// loop while there is still a 1 (i.e. an action)
+		while (validActionMask) {
+			// test if action is valid
+			if (validAction & (int128(1) << action)) {
+				actionList[i++] = action;
+			}
+			validActionMask >>= 1;
+			action++;
+		}
+		return validActionCount;
+	}
+
+	int randAction() {
+		int randIndex = validActionCount == 1 ? 0 : random(0, validActionCount - 1);
+		// get past trailing zero
+		int action = int128_ffs(validAction) - 1;
+		// loop there is still a 1 (e.i. an action)
+		// cerr << "randIndex = " << randIndex << ", action = " << action << endl;
+		// cerr << mtos(validAction, 81) << endl;
+		// cerr << mtos((int128(1) << action), 81) << endl;
+		while (randIndex > 0 || !actionIsValid(action)) {
+			if (actionIsValid(action)) {
+				// cerr << mtos((int128(1) << action), 81) << endl;
+				randIndex--;
+			}
+			action++;
+		}
+		// cerr << mtos((int128(1) << action), 81) << endl;
+		return action;
+	}
+
 	void play(int action) {
+		if (action > 80) {
+			cerr << "wtf action = " << action << endl;
+			exit(0);
+		}
+
 		Mask128 actionMask = (int128(1) << action);
 		int smallBoardIndex = action / 9;
 
 		nonFreeCell |= actionMask;
 		if (myTurn) {
+			if (oppBoard & actionMask) {
+				cerr << "action non disponible" << endl;
+				cerr << "freeCell    = " << mtos(~(nonFreeCell | myBoard | oppBoard), 81) << endl;
+				cerr << "validAction = " << mtos(validAction, 81) << endl;
+				cerr << "action      = " << mtos(actionMask, 81) << endl;
+				cerr << "oppBoard    = " << mtos(oppBoard, 81) << endl;
+				exit(0);
+			}
 			myBoard |= actionMask;
 			int result = boardIsFinal(getUniqueSmallBoard(myBoard, smallBoardIndex));
 			if (result) {
@@ -283,6 +324,14 @@ struct Game {
 			}
 		}
 		else {
+			if (myBoard & actionMask) {
+				cerr << "action non disponible" << endl;
+				cerr << "freeCell    = " << mtos(~(nonFreeCell | myBoard | oppBoard), 81) << endl;
+				cerr << "validAction = " << mtos(validAction, 81) << endl;
+				cerr << "action      = " << mtos(actionMask, 81) << endl;
+				cerr << "myBoard     = " << mtos(myBoard, 81) << endl;
+				exit(0);
+			}
 			oppBoard |= actionMask;
 			int result = boardIsFinal(getUniqueSmallBoard(oppBoard, smallBoardIndex));
 			if (result) {
@@ -380,15 +429,18 @@ struct State {
 
 		// create games for each valid action
 		vector<Game> nextGame;
+		int actionList[81];
+		Game g = game;
+		game.getActionList(actionList);
 		for (size_t i = 0; i < game.validActionCount; i++) {
-			Game g = game;
-			g.play(game.validAction[i]);
+			g = game;
+			g.play(actionList[i]);
 			nextGame.push_back(g);
 		}
 		
 		// detect if there is a final state
 		Game *finalGame = NULL;
-		for (size_t i = 0; i < nextGame.size(); i++) {
+		for (size_t i = 0; i < game.validActionCount; i++) {
 			if (nextGame[i].final()) {
 				finalGame = &nextGame[i];
 				break;
@@ -437,19 +489,10 @@ struct State {
 			parent->backpropagate(__value, root);
 	}
 
-	float rollout(bool debug = false) {
+	float rollout() {
 		Game g = game;
 		while (!g.final()) {
-			// if (g.depth > 30) {
-			// 	for (size_t i = 0; i < g.validActionCount; i++) {
-			// 		Game test = g;
-			// 		test.play(g.validAction[i]);
-			// 		if (test.final())
-			// 			return test.result();
-			// 	}
-			// }
-			int randIndex = random(0, g.validActionCount);
-			g.play(g.validAction[randIndex]);
+			g.play(g.randAction());
 		}
 		return g.result();
 	}
@@ -473,7 +516,7 @@ struct State {
 		cerr << "State{t=" << setw(7) << left << value <<
             ",n=" << setw(5) << left << visitCount <<
             ",av=" << setw(10) << left << value / visitCount <<
-            ",action=" << indexToPos[game.lastAction] <<
+            ",action=" << (game.lastAction != -1 ? indexToPos[game.lastAction] : "none") <<
             "}" << endl;
 	}
 
@@ -534,17 +577,16 @@ void readInput(int &oppAction, int *validAction) {
 	}
 }
 
-void generateInput(State *current, int &oppAction, int *validAction) {
-	int randIndex = random(0, current->game.validActionCount);
-	oppAction = current->game.validAction[randIndex];
-}
+// void generateInput(State *current, int &oppAction, int *validAction) {
+// 	int randIndex = random(0, current->game.validActionCount);
+// 	oppAction = current->game.validAction[randIndex];
+// }
 
 State *mcts(State *initialState, Timer start, float timeout) {
 	State *current;
     int nbOfSimule = 0;
 
 	while (true) {
-		
         double diff = start.diff(false);
         if (diff > timeout)
             break;
@@ -597,13 +639,35 @@ int main(int ac, char *av[]) {
 	srand(time(NULL));
 
 	Game game = Game(0, 0, 0, 0, 0, -1, 0);
+	game.play(40);
+	// game.play(43);
+	// game.play(66);
+	// game.play(32);
+	// game.play(51);
+	// game.play(60);
+
+	// int actionList[81];
+	// game.getActionList(actionList);
+	// game.play(game.randAction());
+	// game.log();
+
 	State *state = new State(game, NULL);
 
 	Timer start;
 
-	State *child = mcts(state, start, 1000);
+	State *child = mcts(state, start, 100);
 	cerr << "Simulation time = " << start.diff() << endl;
 	// child->game.log();
+
+	// while (!game.final()) {
+	// 	game.play(game.randAction());
+	// 	cerr << "lastAction = " << game.lastAction << endl;
+	// 	game.log();
+	// 	int actionList[81];
+	// 	game.getActionList(actionList);
+	// 	// string str;
+	// 	// getline(cin, str);
+	// }
 
 	delete state;
 	return 0;
@@ -612,25 +676,25 @@ int main(int ac, char *av[]) {
 // int main() {
 // 	int oppAction;
 // 	int validAction[81];
-
+//
 // 	Game initialGame = Game(0, 0, 0, 0, 0, -1, 0);
 // 	State *initialState = new State(initialGame, NULL);
-
+//
 //     State *current = initialState;
-
+//
 // 	int first = true;
 //     while (1) {
-
+//
 // 		if (current->game.final()) {
 // 			cerr << "result = " << current->game.result() << endl;
 // 			delete initialState;
 // 			return 0;
 // 		}
-
+//
 // 		readInput(oppAction, validAction);
 // 		// generateInput(current, oppAction, validAction);
 //         Timer start;
-
+//
 // 		if (first) {
 // 			if (oppAction != -1)
 // 				current->game.play(oppAction);
@@ -640,15 +704,15 @@ int main(int ac, char *av[]) {
 // 		else {
 // 			current = opponentPlay(current, oppAction);
 // 		}
-
+//
 //         current->game.log();
 //         cerr << endl;
-
+//
 //         // my play
 //         State *child = mcts(current, start, first ? 990 : 90);
-
+//
 //         cerr << "simule time " << start.diff() << endl;
-        
+//
 //         if (child == NULL) {
 //             cerr << "mcts did not return any action" << endl;
 //             cout << indexToPos[validAction[0]] << endl;

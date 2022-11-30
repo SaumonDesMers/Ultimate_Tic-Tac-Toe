@@ -11,10 +11,7 @@
 // #endif // end !POPCNT
 
 #include <iostream>
-#include <fstream>
 #include <string>
-// #include <vector>
-#include <algorithm>
 #include <cmath>
 #include <random>
 #include <cstdlib>
@@ -435,12 +432,13 @@ struct State {
 	int visitCount;
 	Game game;
 	State *parent;
-	vector<State *> children;
+	State *children[81];
+	int childrenCount;
 	int id;
 
-	State(Game __game, State *__parent) : value(0), visitCount(0), game(__game), parent(__parent), id(stateId++) {}
+	State(Game __game, State *__parent) : value(0), visitCount(0), game(__game), parent(__parent), childrenCount(0), id(stateId++) {}
 	~State() {
-		for (size_t i = 0; i < children.size(); i++)
+		for (size_t i = 0; i < childrenCount; i++)
 			delete children[i];
 	}
 
@@ -469,14 +467,15 @@ struct State {
 			}
 		}
 
+		childrenCount = 0;
 		// if there is a final state: expand only this one
 		if (finalGame != NULL) {
-			children.push_back(new State(*finalGame, this));
+			children[childrenCount++] = new State(*finalGame, this);
 		}
 		// else: expand all next state
 		else {
 			for (size_t i = 0; i < nextGame.size(); i++)
-				children.push_back(new State(nextGame[i], this));
+				children[childrenCount++] = new State(nextGame[i], this);
 		}
 		return children[0];
 	}
@@ -494,7 +493,7 @@ struct State {
 	State *maxUCB1Child() {
 		State *child = NULL;
 		float maxUCB1 = 0;
-		for (size_t i = 0; i < children.size(); i++) {
+		for (size_t i = 0; i < childrenCount; i++) {
 			float UCB1 = children[i]->UCB1();
 			if (UCB1 > maxUCB1) {
 				maxUCB1 = UCB1;
@@ -520,11 +519,11 @@ struct State {
 	}
 
 	State *maxAverageValueChild() {
-		if (children.empty())
+		if (childrenCount)
 			return NULL;
 		State *child = children[0];
 		float maxAverageValue = -1;
-		for (size_t i = 0; i < children.size(); i++) {
+		for (size_t i = 0; i < childrenCount; i++) {
 			float averageValue = children[i]->value / children[i]->visitCount;
 			if (averageValue > maxAverageValue) {
 				maxAverageValue = averageValue;
@@ -544,39 +543,13 @@ struct State {
 
 };
 
-void dump_node(State *node, std::ofstream & myfile, int deep) {
-    if (--deep <= 0)
-        return;
-    myfile << '\t' << node->id << "[label=\"[" << indexToPos[node->game.lastAction] << "]\n"
-    <<"P=" << node->game.myTurn << "W=" << node->value << ";V=" << node->visitCount<< '\"';
-    myfile <<"]\n";
-    for(int i = 0; i < node->children.size(); i++) {
-        myfile << '\t' << node->id << " -> " << node->children[i]->id << std::endl;
-    }
-    for (int i = 0; i < node->children.size(); i++) {
-        dump_node(node->children[i], myfile, deep);
-    }
-}
-
-void dump_tree(std::string fileName, State *root) {
-    std::ofstream myfile;
-	myfile.open(fileName);
-    myfile << "strict digraph {\n";
-    myfile << "\tnode [shape=\"rect\"]\n";
-
-    dump_node(root, myfile, 5);
-
-    myfile << "}";
-    myfile.close();
-}
-
 State *opponentPlay(State *state, Mask128 action) {
-	for (size_t i = 0; i < state->children.size(); i++) {
+	for (size_t i = 0; i < state->childrenCount; i++) {
 		if (action == state->children[i]->game.lastAction)
 			return state->children[i];
 	}
 	cerr << "Invalid action " << actionIndex(action) << " in:" << endl;
-	for (size_t i = 0; i < state->children.size(); i++) {
+	for (size_t i = 0; i < state->childrenCount; i++) {
 		cerr << actionIndex(state->children[i]->game.lastAction) << " ";
 	}
 	cerr << endl;
@@ -615,7 +588,7 @@ State *mcts(State *initialState, Timer start, float timeout) {
 		current = initialState;
 
 		timer.set();
-		while (!current->children.empty())
+		while (current->childrenCount > 0)
 			current = current->maxUCB1Child();
 
 		if (current->visitCount > 0)
@@ -639,7 +612,7 @@ State *mcts(State *initialState, int maxIter) {
 
 		current = initialState;
 
-		while (!current->children.empty())
+		while (!current->childrenCount)
 			current = current->maxUCB1Child();
 
 		if (current->visitCount > 0)

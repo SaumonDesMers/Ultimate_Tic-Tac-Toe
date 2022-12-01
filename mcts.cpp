@@ -1,14 +1,14 @@
-// #undef _GLIBCXX_DEBUG                // disable run-time bound checking, etc
-// #pragma GCC optimize("Ofast,inline") // Ofast = O3,fast-math,allow-store-data-races,no-protect-parens
+#undef _GLIBCXX_DEBUG                // disable run-time bound checking, etc
+#pragma GCC optimize("Ofast,inline") // Ofast = O3,fast-math,allow-store-data-races,no-protect-parens
 
-// #ifndef __POPCNT__ // not march=generic
+#ifndef __POPCNT__ // not march=generic
 
-// #pragma GCC target("bmi,bmi2,lzcnt,popcnt")                      // bit manipulation
-// #pragma GCC target("movbe")                                      // byte swap
-// #pragma GCC target("aes,pclmul,rdrnd")                           // encryption
-// #pragma GCC target("avx,avx2,f16c,fma,sse3,ssse3,sse4.1,sse4.2") // SIMD
+#pragma GCC target("bmi,bmi2,lzcnt,popcnt")                      // bit manipulation
+#pragma GCC target("movbe")                                      // byte swap
+#pragma GCC target("aes,pclmul,rdrnd")                           // encryption
+#pragma GCC target("avx,avx2,f16c,fma,sse3,ssse3,sse4.1,sse4.2") // SIMD
 
-// #endif // end !POPCNT
+#endif // end !POPCNT
 
 #include <iostream>
 #include <string>
@@ -85,6 +85,17 @@ typedef __int16_t Mask16;
 */
 
 int stateId = 0;
+
+// uint64_t shuffle_table[2] = {static_cast<uint64_t>(time(NULL)), static_cast<uint64_t>(time(NULL)) >> 16};
+// uint64_t random(int min, int max) {
+// 	uint64_t s1 = shuffle_table[0];
+// 	uint64_t s0 = shuffle_table[1];
+// 	uint64_t result = s0 + s1;
+// 	shuffle_table[0] = s0;
+// 	s1 ^= s1 << 23;
+// 	shuffle_table[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5);
+// 	return min + result % (max - min);
+// }
 
 struct Timer {
 	clock_t time_point;
@@ -178,6 +189,7 @@ struct Game {
 	int validActionComputed;
 	int depth;
 
+	Game() {};
 	Game(Mask16 _myBigBoard, Mask16 _oppBigBoard, Mask128 _myBoard, Mask128 _oppBoard, int _myTurn, Mask128 _lastAction, int _depth) :
 		myBigBoard(_myBigBoard),
 		oppBigBoard(_oppBigBoard),
@@ -297,10 +309,7 @@ struct Game {
 		// cerr << mtos(validAction, 81) << endl;
 		// cerr << mtos(action, 81) << endl;
 		while (randIndex > 0 || !(action & validAction)) {
-			if (action & validAction) {
-				// cerr << mtos(action, 81) << endl;
-				--randIndex;
-			}
+			randIndex -= action & validAction ? 1 : 0;
 			action <<= 1;
 		}
 		// cerr << "action send  = " << mtos(action, 81) << endl;
@@ -316,44 +325,27 @@ struct Game {
 		// 	cerr << "wtf action = " << actionIndex << endl;
 		// 	exit(0);
 		// }
-
 		// cerr << "Play" << endl;
-
 		// cerr << "action is    = " << mtos(action, 81) << endl;
 
 		int smallBoardIndex = (int128_ffs(action) - 1) / 9;
 
-		if (myTurn) {
-			// if (oppBoard & action) {
-			// 	cerr << "action non disponible" << endl;
-			// 	cerr << "freeCell    = " << mtos(~(nonFreeCell | myBoard | oppBoard), 81) << endl;
-			// 	cerr << "validAction = " << mtos(validAction, 81) << endl;
-			// 	cerr << "action      = " << mtos(action, 81) << endl;
-			// 	cerr << "oppBoard    = " << mtos(oppBoard, 81) << endl;
-			// 	exit(0);
-			// }
-			myBoard |= action;
-			int result = boardIsFinal(getUniqueSmallBoard(myBoard, smallBoardIndex));
-			if (result) {
-				myBigBoard |= result << smallBoardIndex;
-				nonFreeCell |= smallBoardMask(smallBoardIndex);
-			}
-		}
-		else {
-			// if (myBoard & action) {
-			// 	cerr << "action non disponible" << endl;
-			// 	cerr << "freeCell    = " << mtos(~(nonFreeCell | myBoard | oppBoard), 81) << endl;
-			// 	cerr << "validAction = " << mtos(validAction, 81) << endl;
-			// 	cerr << "action      = " << mtos(action, 81) << endl;
-			// 	cerr << "myBoard     = " << mtos(myBoard, 81) << endl;
-			// 	exit(0);
-			// }
-			oppBoard |= action;
-			int result = boardIsFinal(getUniqueSmallBoard(oppBoard, smallBoardIndex));
-			if (result) {
-				oppBigBoard |= result << smallBoardIndex;
-				nonFreeCell |= smallBoardMask(smallBoardIndex);
-			}
+		Mask128 &workingBoard = myTurn ? myBoard : oppBoard;
+		Mask16 &workingBigBoard = myTurn ? myBigBoard : oppBigBoard;
+
+		// if (workingBoard & action) {
+		// 	cerr << "action non disponible" << endl;
+		// 	cerr << "freeCell     = " << mtos(~(nonFreeCell | myBoard | oppBoard), 81) << endl;
+		// 	cerr << "validAction  = " << mtos(validAction, 81) << endl;
+		// 	cerr << "action       = " << mtos(action, 81) << endl;
+		// 	cerr << "workingBoard = " << mtos(workingBoard, 81) << endl;
+		// 	exit(0);
+		// }
+		workingBoard |= action;
+		int result = boardIsFinal(getUniqueSmallBoard(workingBoard, smallBoardIndex));
+		if (result) {
+			workingBigBoard |= result << smallBoardIndex;
+			nonFreeCell |= smallBoardMask(smallBoardIndex);
 		}
 		nonFreeCell |= action;
 
@@ -362,7 +354,6 @@ struct Game {
 		lastAction = action;
 		validActionCount = 0;
 		validActionComputed = false;
-		// log();
 		computeValidAction();
 	}
 
@@ -422,7 +413,7 @@ struct Game {
 			oppBoardTmp >>= 1;
 		}
 		int actionIndex = actionIndex(lastAction);
-		cerr << "myTurn = " << myTurn << "  lastAction = " << (actionIndex != -1 ? indexToPos[actionIndex] : "none") << endl;
+		cerr << "myTurn = " << myTurn << "  lastAction = " << (actionIndex != -1 ? indexToPos[actionIndex(actionIndex)] : "none") << endl;
 		cerr << str << endl;
 	}
 };
@@ -450,10 +441,11 @@ struct State {
 		// create games for each valid action
 		vector<Game> nextGame;
 		int actionList[81];
-		Game g = game;
+		Game g;
 		game.getActionList(actionList);
 		for (size_t i = 0; i < game.validActionCount; i++) {
 			g = game;
+			// cerr << actionList[i] << endl;
 			g.play(actionMask(actionList[i]));
 			nextGame.push_back(g);
 		}
@@ -519,7 +511,7 @@ struct State {
 	}
 
 	State *maxAverageValueChild() {
-		if (childrenCount)
+		if (childrenCount == 0)
 			return NULL;
 		State *child = children[0];
 		float maxAverageValue = -1;
@@ -561,7 +553,11 @@ State *opponentPlay(State *state, Mask128 action) {
 void readInput(Mask128 &oppAction, int *validAction) {
 	int opp_row; int opp_col;
 	cin >> opp_row >> opp_col; cin.ignore();
-	oppAction = int128(1) << (opp_row == -1 ? -1 : posToIndex[opp_row][opp_col]);
+	if (opp_row == -1)
+		oppAction = 0;
+	else
+		oppAction = int128(1) << posToIndex[opp_row][opp_col];
+	// cerr << mtos(oppAction, 81) << endl;
 
 	int valid_action_count;
 	cin >> valid_action_count; cin.ignore();
@@ -628,89 +624,98 @@ State *mcts(State *initialState, int maxIter) {
 	return initialState->maxAverageValueChild();
 }
 
-int main(int ac, char *av[]) {
+// int main(int ac, char *av[]) {
 
-	srand(time(NULL));
-
-	Game game = Game(0, 0, 0, 0, 0, -1, 0);
-
-	// game.play(actionMask(40));
-
-	State *state = new State(game, NULL);
-
-	Timer start;
-
-	State *child = mcts(state, start, 1000);
-	cerr << "Simulation time = " << start.diff() << endl;
-	// child->game.log();
-
-	// while (!game.final()) {
-	// 	cerr << "- NEXT TURN -" << endl;
-	// 	game.play(game.randAction());
-	// 	string str;
-	// 	getline(cin, str);
-	// }
-
-	// delete state;
-	return 0;
-}
-
-// int main() {
 // 	srand(time(NULL));
 
-// 	Mask128 oppAction;
-// 	int validAction[81];
+// 	Game game = Game(0, 0, 0, 0, 0, -1, 0);
 
-// 	Game initialGame = Game(0, 0, 0, 0, 0, -1, 0);
-// 	State *initialState = new State(initialGame, NULL);
+// 	State *state = new State(game, NULL);
 
-//     State *current = initialState;
+// 	Timer start;
 
-// 	int first = true;
-//     while (1) {
+// 	State *child = mcts(state, start, 1000);
+// 	cerr << "Simulation time = " << start.diff() << endl;
+// 	// child->game.log();
 
-// 		if (current->game.final()) {
-// 			cerr << "result = " << current->game.result() << endl;
-// 			delete initialState;
-// 			return 0;
-// 		}
+// 	for (size_t i = 0; i < state->game.validActionCount; i++)
+// 		state->children[i]->log();
 
-// 		// readInput(oppAction, validAction);
-// 		generateInput(current, oppAction, validAction);
-//         Timer start;
+// 	// while (!game.final()) {
+// 	// 	cerr << "- NEXT TURN -" << endl;
+// 	// 	game.play(game.randAction());
+// 	// 	string str;
+// 	// 	getline(cin, str);
+// 	// }
 
-// 		if (current->game.final()) {
-// 			cerr << "result = " << current->game.result() << endl;
-// 			delete initialState;
-// 			return 0;
-// 		}
-
-// 		if (first) {
-// 			if (oppAction != -1)
-// 				current->game.play(oppAction);
-// 			else
-// 				current->game.myTurn = 1;
-// 		}
-// 		else {
-// 			current = opponentPlay(current, oppAction);
-// 		}
-
-//         // my play
-//         State *child = mcts(current, start, first ? 990 : 90);
-
-//         cerr << "simule time " << start.diff() << endl;
-
-//         if (child == NULL) {
-//             cerr << "mcts did not return any action" << endl;
-//             cout << indexToPos[validAction[0]] << endl;
-// 			current = opponentPlay(current, validAction[0]);
-//         }
-//         else {
-//             cout << indexToPos[actionIndex(child->game.lastAction)] << endl;
-//             current = child;
-//         }
-//         current->game.log();
-//         cerr << endl;
-// 		first = false;
-//     }
+// 	delete state;
+// 	return 0;
 // }
+
+int main() {
+	srand(time(NULL));
+
+	Mask128 oppAction;
+	int validAction[81];
+
+	Game initialGame = Game(0, 0, 0, 0, 0, -1, 0);
+	State *initialState = new State(initialGame, NULL);
+
+    State *current = initialState;
+
+	int first = true;
+    while (1) {
+
+		if (current->game.final()) {
+			cerr << "result = " << current->game.result() << endl;
+			delete initialState;
+			return 0;
+		}
+
+		readInput(oppAction, validAction);
+		// generateInput(current, oppAction, validAction);
+        Timer start;
+
+		if (current->game.final()) {
+			cerr << "result = " << current->game.result() << endl;
+			delete initialState;
+			return 0;
+		}
+
+		if (first) {
+			if (oppAction != 0)
+				current->game.play(oppAction);
+			else
+				current->game.myTurn = 1;
+		}
+		else {
+			current = opponentPlay(current, oppAction);
+		}
+
+        current->game.log();
+		// string str;
+		// getline(cin, str);
+
+        // my play
+        State *child = mcts(current, start, first ? 990 : 90);
+
+		// for (size_t i = 0; i < current->game.validActionCount; i++)
+		// 	current->children[i]->log();
+
+        cerr << "simule time " << start.diff() << endl;
+
+        if (child == NULL) {
+            cerr << "mcts did not return any action" << endl;
+            cout << indexToPos[validAction[0]] << endl;
+			current = opponentPlay(current, validAction[0]);
+        }
+        else {
+            cout << indexToPos[actionIndex(child->game.lastAction)] << endl;
+            current = child;
+        }
+        current->game.log();
+        cerr << endl;
+		first = false;
+		// getline(cin, str);
+    }
+}

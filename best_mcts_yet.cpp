@@ -1,14 +1,14 @@
-#undef _GLIBCXX_DEBUG                // disable run-time bound checking, etc
-#pragma GCC optimize("Ofast,inline") // Ofast = O3,fast-math,allow-store-data-races,no-protect-parens
+// #undef _GLIBCXX_DEBUG                // disable run-time bound checking, etc
+// #pragma GCC optimize("Ofast,inline") // Ofast = O3,fast-math,allow-store-data-races,no-protect-parens
 
-#ifndef __POPCNT__ // not march=generic
+// #ifndef __POPCNT__ // not march=generic
 
-#pragma GCC target("bmi,bmi2,lzcnt,popcnt")                      // bit manipulation
-#pragma GCC target("movbe")                                      // byte swap
-#pragma GCC target("aes,pclmul,rdrnd")                           // encryption
-#pragma GCC target("avx,avx2,f16c,fma,sse3,ssse3,sse4.1,sse4.2") // SIMD
+// #pragma GCC target("bmi,bmi2,lzcnt,popcnt")                      // bit manipulation
+// #pragma GCC target("movbe")                                      // byte swap
+// #pragma GCC target("aes,pclmul,rdrnd")                           // encryption
+// #pragma GCC target("avx,avx2,f16c,fma,sse3,ssse3,sse4.1,sse4.2") // SIMD
 
-#endif // end !POPCNT
+// #endif // end !POPCNT
 
 #include <iostream>
 #include <string>
@@ -85,6 +85,17 @@ typedef __int16_t Mask16;
 */
 
 int stateId = 0;
+
+// uint64_t shuffle_table[2] = {static_cast<uint64_t>(time(NULL)), static_cast<uint64_t>(time(NULL)) >> 16};
+// uint64_t random(int min, int max) {
+// 	uint64_t s1 = shuffle_table[0];
+// 	uint64_t s0 = shuffle_table[1];
+// 	uint64_t result = s0 + s1;
+// 	shuffle_table[0] = s0;
+// 	s1 ^= s1 << 23;
+// 	shuffle_table[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5);
+// 	return min + result % (max - min);
+// }
 
 struct Timer {
 	clock_t time_point;

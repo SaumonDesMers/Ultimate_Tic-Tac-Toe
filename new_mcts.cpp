@@ -190,23 +190,17 @@ struct Game
 	Mask128 last_action;
 	int my_turn;
 	int valid_action_count;
-	int valid_action_computed;
-	int depth;
 
 	Game() {}
-	Game(Mask16 _my_big_board, Mask16 _opp_big_board, Mask128 _my_board, Mask128 _opp_board, int _my_turn, Mask128 _last_action, int _depth) :
+	Game(Mask16 _my_big_board, Mask16 _opp_big_board, Mask128 _my_board, Mask128 _opp_board, int _my_turn, Mask128 _last_action) :
 		my_big_board(_my_big_board),
 		opp_big_board(_opp_big_board),
 		my_board(_my_board),
 		opp_board(_opp_board),
 		my_turn(_my_turn),
 		last_action(_last_action),
-		valid_action_count(0),
-		valid_action_computed(false),
-		depth(_depth)
-		{
-			compute_valid_action();
-		}
+		valid_action_count(0)
+	{}
 
 	Game(const Game &src) :
 		my_big_board(src.my_big_board),
@@ -216,11 +210,10 @@ struct Game
 		valid_action(src.valid_action),
 		my_turn(src.my_turn),
 		last_action(src.last_action),
-		valid_action_count(src.valid_action_count),
-		valid_action_computed(src.valid_action_computed),
-		depth(src.depth) {}
+		valid_action_count(src.valid_action_count)
+	{}
 
-	Game &operator=(const Game &src)
+	Game & operator=(const Game &src)
 	{
 		my_big_board = src.my_big_board;
 		opp_big_board = src.opp_big_board;
@@ -230,16 +223,12 @@ struct Game
 		my_turn = src.my_turn;
 		last_action = src.last_action;
 		valid_action_count = src.valid_action_count;
-		valid_action_computed = src.valid_action_computed;
-		depth = src.depth;
 		return *this;
 	}
 
 	Mask128 get_unique_small_board(Mask128 board, int i) { return (board >> (i * 9)) & 0x1ff; }
 
 	Mask128 small_board_mask(int i) { return (int128(0x1ff) << (i * 9)); }
-
-	bool isSmall_board_final(int i) { return (((my_big_board | opp_big_board) >> i) & 1); }
 
 	int first_action_index(Mask128 mask) { return ffs128(valid_action) - 1; }
 
@@ -258,9 +247,6 @@ struct Game
 
 	void compute_valid_action()
 	{
-		if (valid_action_computed)
-			return;
-
 		// std::cerr << "Compute valid action" << std::endl;
 		// std::cerr << "my_board	  = " << mtos(my_board, 81) << std::endl;
 		// std::cerr << "opp_board	 = " << mtos(opp_board, 81) << std::endl;
@@ -282,7 +268,6 @@ struct Game
 		// std::cerr << "valid_action  = " << mtos(valid_action, 81) << std::endl;
 
 		valid_action_count = popcount128(valid_action);
-		valid_action_computed = true;
 	}
 
 	int get_action_list(Mask128 action_list[81])
@@ -346,11 +331,9 @@ struct Game
 			working_board |= small_board_mask(small_board_index);
 		}
 
-		depth++;
 		my_turn = !my_turn;
 		last_action = action;
 		valid_action_count = 0;
-		valid_action_computed = false;
 		compute_valid_action();
 	}
 
@@ -423,15 +406,18 @@ struct Game
 
 struct State
 {
-	float value;
-	int visit_count;
+	float value = 0;
+	int visit_count = 0;
 	Game game;
 	State *parent;
 	State *children[81];
-	int children_count;
+	int children_count = 0;
+	int sub_tree_size = 0;
 	int id;
 
-	State(Game __game, State * __parent) : value(0), visit_count(0), game(__game), parent(__parent), children_count(0), id(state_id++) {}
+	State(Game __game, State * __parent):
+		game(__game), parent(__parent), id(state_id++) {}
+
 	~State()
 	{
 		for (size_t i = 0; i < children_count; i++)
@@ -440,7 +426,7 @@ struct State
 
 	State * expand()
 	{
-		// if is_final state return current state
+		// if final state return current state
 		if (game.is_final())
 			return this;
 
@@ -458,7 +444,7 @@ struct State
 			next_game[next_game_count++] = g;
 		}
 		
-		// detect if there is a winning is_final state (still don't know if useful)
+		// detect if there is a winning final state
 		Game *winning_final_game = NULL;
 		for (size_t i = 0; i < game.valid_action_count; i++)
 		{
@@ -470,7 +456,7 @@ struct State
 		}
 
 		children_count = 0;
-		// if there is a is_final state: expand only this one
+		// if there is a winning final state: expand only this one
 		if (winning_final_game != NULL)
 		{
 			children[children_count++] = new State(*winning_final_game, this);
@@ -480,6 +466,7 @@ struct State
 		{
 			for (size_t i = 0; i < next_game_count; i++)
 			{
+				// don't expand the losing final state
 				if (next_game[i].is_final() && next_game[i].result() == 0)
 					continue;
 				children[children_count++] = new State(next_game[i], this);
@@ -515,12 +502,13 @@ struct State
 		return child;
 	}
 
-	void backpropagate(float new_value, State * root)
+	void backpropagate(float new_value, State * root, int expanded_child_count)
 	{
 		visit_count++;
 		value += new_value;
+		sub_tree_size += expanded_child_count;
 		if (parent != NULL && this != root)
-			parent->backpropagate(new_value, root);
+			parent->backpropagate(new_value, root, expanded_child_count);
 	}
 
 	float rollout()
@@ -562,7 +550,7 @@ struct State
 
 };
 
-State *opponentPlay(State *state, Mask128 action)
+State * opponentPlay(State * state, Mask128 action)
 {
 	for (size_t i = 0; i < state->children_count; i++)
 	{
@@ -580,7 +568,7 @@ State *opponentPlay(State *state, Mask128 action)
 	return state;
 }
 
-void readInput(Mask128 &opp_action, int *valid_action)
+void readInput(Mask128 & opp_action, int * valid_action)
 {
 	int opp_row; int opp_col;
 	cin >> opp_row >> opp_col; cin.ignore();
@@ -600,30 +588,35 @@ void readInput(Mask128 &opp_action, int *valid_action)
 	}
 }
 
-void generateInput(State *current, Mask128 &opp_action, int *valid_action)
+void generateInput(State * current, Mask128 & opp_action, int * valid_action)
 {
 	opp_action = current->game.rand_action();
 }
 
-State *mcts(State *initial_state, Timer start, float timeout)
+State * mcts(State * initial_state, Timer start, float timeout)
 {
-	State *current;
+	State * current;
 	int nb_of_simule = 0;
+	int state_count_before = state_id;
 
 	while (true)
 	{
 		current = initial_state;
 		
-		timer.set();
 		while (current->children_count > 0)
 			current = current->max_UCB1_child();
 		
+		int extended_state_count = 0;
 		if (current->visit_count > 0)
+		{
+			State * tmp = current;
 			current = current->expand();
+			extended_state_count = tmp->children_count;
+		}
 		
 		float value = current->rollout();
 		
-		current->backpropagate(value, initial_state);
+		current->backpropagate(value, initial_state, extended_state_count);
 		
 		nb_of_simule++;
 
@@ -631,21 +624,28 @@ State *mcts(State *initial_state, Timer start, float timeout)
 		if (diff > timeout)
 			break;
 	}
-	std::cerr << "nb of simule = " << nb_of_simule << std::endl;
+
+	int state_count_after = state_id;
+	std::cerr << "Simulation result:" << std::endl;
+	std::cerr << "time = " << start.diff() << std::endl;
+	std::cerr << "count = " << nb_of_simule << std::endl;
+	std::cerr << "expanded state = " << (state_count_after - state_count_before) << std::endl;
+	std::cerr << "total state count = " << state_count_after << std::endl;
+	std::cerr << "subtree size = " << initial_state->sub_tree_size << std::endl;
+
 	return initial_state->max_average_value_child();
 }
 
-State *mcts(State *initial_state, int max_iter)
+State * mcts(State * initial_state, int max_iter)
 {
 	State *current;
 	int nb_of_simule = 0;
 
 	while (nb_of_simule < max_iter)
 	{
-
 		current = initial_state;
 
-		while (!current->children_count)
+		while (current->children_count > 0)
 			current = current->max_UCB1_child();
 
 		if (current->visit_count > 0)
@@ -653,44 +653,44 @@ State *mcts(State *initial_state, int max_iter)
 
 		float value = current->rollout();
 
-		current->backpropagate(value, initial_state);
+		current->backpropagate(value, initial_state, 0);
 
 		nb_of_simule++;
 	}
-	std::cerr << "nb of simule = " << nb_of_simule << std::endl;
 	return initial_state->max_average_value_child();
 }
 
-int main(int ac, char *av[])
-{
-	srand(time(NULL));
+// int main(int ac, char *av[])
+// {
+// 	srand(time(NULL));
 
-	Game game = Game(0, 0, 0, 0, 0, -1, 0);
+// 	Game game = Game(0, 0, 0, 0, 0, -1);
+// 	game.compute_valid_action();
 
-	State *state = new State(game, NULL);
+// 	State *state = new State(game, NULL);
 
-	Timer start;
+// 	Timer start;
 
-	State *child = mcts(state, start, 1000);
-	std::cerr << "Simulation time = " << start.diff() << std::endl;
-	// child->game.log();
+// 	State *child = mcts(state, start, 1000);
+// 	std::cerr << "Simulation time = " << start.diff() << std::endl;
+// 	// child->game.log();
 
-	// for (size_t i = 0; i < state->game.valid_action_count; i++)
-	// 	state->children[i]->log();
+// 	// for (size_t i = 0; i < state->game.valid_action_count; i++)
+// 	// 	state->children[i]->log();
 
-	// while (!game.is_final())
-	// {
-	// 	std::cerr << "- NEXT TURN -" << std::endl;
-	// 	game.play(game.rand_action());
-	// 	std::string str;
-	// 	getline(cin, str);
-	// }
+// 	// while (!game.is_final())
+// 	// {
+// 	// 	std::cerr << "- NEXT TURN -" << std::endl;
+// 	// 	game.play(game.rand_action());
+// 	// 	std::string str;
+// 	// 	getline(cin, str);
+// 	// }
 
-	delete state;
-	return 0;
-}
+// 	delete state;
+// 	return 0;
+// }
 
-/*
+
 int main()
 {
 	srand(time(NULL));
@@ -698,7 +698,8 @@ int main()
 	Mask128 opp_action;
 	int valid_action[81];
 
-	Game initial_game = Game(0, 0, 0, 0, 0, -1, 0);
+	Game initial_game = Game(0, 0, 0, 0, 0, -1);
+	initial_game.compute_valid_action();
 	State *initial_state = new State(initial_game, NULL);
 
 	State *current = initial_state;
@@ -706,24 +707,15 @@ int main()
 	int first = true;
 	while (1)
 	{
-
 		if (current->game.is_final())
-		{
-			std::cerr << "result = " << current->game.result() << std::endl;
-			delete initial_state;
-			return 0;
-		}
+			break;
 
-		readInput(opp_action, valid_action);
-		// generateInput(current, opp_action, valid_action);
+		// readInput(opp_action, valid_action);
+		generateInput(current, opp_action, valid_action);
 		Timer start;
 
 		if (current->game.is_final())
-		{
-			std::cerr << "result = " << current->game.result() << std::endl;
-			delete initial_state;
-			return 0;
-		}
+			break;
 
 		if (first)
 		{
@@ -737,17 +729,9 @@ int main()
 			current = opponentPlay(current, opp_action);
 		}
 
-		current->game.log();
-		// std::string str;
-		// getline(cin, str);
-
-		// my play
+		// current->game.log();
 		State *child = mcts(current, start, first ? 990 : 90);
-
-		// for (size_t i = 0; i < current->game.valid_action_count; i++)
-		// 	current->children[i]->log();
-
-		std::cerr << "simule time " << start.diff() << std::endl;
+		// State *child = mcts(current, 100);
 
 		if (child == NULL)
 		{
@@ -758,12 +742,15 @@ int main()
 		else
 		{
 			cout << index_to_pos[action_index(child->game.last_action)] << std::endl;
+			std::cerr << "response time " << start.diff() << std::endl;
 			current = child;
 		}
-		current->game.log();
+		// current->game.log();
 		std::cerr << std::endl;
 		first = false;
-		// getline(cin, str);
 	}
+
+	std::cerr << "result = " << current->game.result() << std::endl;
+	delete initial_state;
 }
-*/
+

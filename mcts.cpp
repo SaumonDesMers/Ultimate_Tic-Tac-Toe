@@ -1,6 +1,6 @@
 #ifndef DEBUG
 	#undef _GLIBCXX_DEBUG
-	#pragma GCC optimize "Ofast,unroll-loops,omit-frame-pointer,inline"
+	#pragma GCC optimize "O2,unroll-loops,omit-frame-pointer,inline"
 	#pragma GCC option("arch=native", "tune=native", "no-zero-upper")
 	// #ifndef POPCNT
 	#pragma GCC target("movbe,aes,pclmul,avx,avx2,f16c,fma,sse3,ssse3,sse4.1,sse4.2,rdrnd,popcnt,bmi,bmi2,lzcnt")

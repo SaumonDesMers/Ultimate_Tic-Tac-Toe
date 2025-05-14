@@ -186,13 +186,22 @@ struct Game
 	uint8_t my_turn;
 	uint8_t valid_action_count;
 
+	Game * parent = NULL;
+	Game * children = NULL;
+	int children_count = 0;
+
+	bool force_win = false;
+	bool force_lose = false;
+	bool visited = false;
+
 	Game() {}
-	Game(Mask128 _my_board, Mask128 _opp_board, int _my_turn, uint8_t _last_action_index) :
+	Game(Mask128 _my_board, Mask128 _opp_board, int _my_turn, uint8_t _last_action_index, Game * _parent = NULL):
 		my_board(_my_board),
 		opp_board(_opp_board),
 		my_turn(_my_turn),
 		last_action_index(_last_action_index),
-		valid_action_count(0)
+		valid_action_count(0),
+		parent(_parent)
 	{}
 
 	int is_board_final(Mask16 board)
@@ -294,30 +303,18 @@ struct Game
 		return is_final();
 	}
 
-	int count_big_cells(Mask128 board)
-	{
-		int count = 0;
-		for (size_t i = 0; i < 9; i++)
-		{
-			const Mask128 small_board_mask = get_small_board_mask(i);
-			if (board & small_board_mask == small_board_mask)
-				count++;
-		}
-		return count;
-	}
-
-	float result()
+	int result()
 	{
 		if (is_big_board_final(my_board))
 			return 1;
 		if (is_big_board_final(opp_board))
 			return 0;
-		int diff = count_big_cells(my_board) - count_big_cells(opp_board);
-		if (diff > 0)
-			return 1;
-		if (diff < 0)
-			return 0;
-		return 0.5;
+		// int diff = __builtin_popcount(my_big_board) - __builtin_popcount(opp_big_board);
+		// if (diff > 0)
+		// 	return 1;
+		// if (diff < 0)
+		// 	return 0;
+		return 0;
 	}
 
 	void log()
@@ -364,174 +361,41 @@ struct Game
 		std::cerr << "my_turn = " << bool(my_turn) << "  last_action = " << (last_action_index != -1 ? index_to_pos[last_action_index] : "none") << std::endl;
 		std::cerr << str << std::endl;
 	}
-};
 
-struct State
-{
-	Game game;
-	State *parent;
-	State *children;
-	int children_count = 0;
-	float value = 0;
-	int visit_count = 0;
-
-	State(Game __game = Game(0, 0, 0, -1), State * __parent = NULL):
-		game(__game), parent(__parent) {}
-
-	~State()
+	void expand()
 	{
-		// for (size_t i = 0; i < children_count; i++)
-		// 	delete children[i];
-		// delete[] children;
-	}
-
-	State * expand()
-	{
-		// if final state return current state
-		if (game.is_final())
-			return this;
-
-		// create games for each valid action
-		Game next_game[81];
 		Mask128 action_list[81];
-		Game g;
-		game.get_action_list(action_list);
-		for (size_t i = 0; i < game.valid_action_count; i++)
+		valid_action_count = get_action_list(action_list);
+		children_count = valid_action_count;
+		children = new Game[valid_action_count];
+		for (size_t i = 0; i < valid_action_count; i++)
 		{
-			g = game;
-			g.play(action_list[i]);
-			next_game[i] = g;
+			children[i] = *this;
+			children[i].children = NULL;
+			children[i].children_count = 0;
+			children[i].parent = this;
+			children[i].visited = false;
+			children[i].play(action_list[i]);
 		}
-		
-		// detect if there is a winning final state
-		Game *winning_final_game = NULL;
-		for (size_t i = 0; i < game.valid_action_count; i++)
-		{
-			if (next_game->is_final() && next_game[i].result() > 0.8)
-			{
-				winning_final_game = &next_game[i];
-				break;
-			}
-		}
-
-		// if there is a winning final state: expand only this one
-		if (winning_final_game != NULL)
-		{
-			// allocate memory for children
-			children_count = 1;
-			children = new State[children_count];
-
-			children[0] = State(*winning_final_game, this);
-		}
-		// else: expand all next state
-		else
-		{
-			// allocate memory for children
-			children_count = 0;
-			children = new State[game.valid_action_count];
-
-			for (size_t i = 0; i < game.valid_action_count; i++)
-			{
-				// don't expand the losing final state
-				if (next_game[i].is_final() && next_game[i].result() == 0)
-				// if (next_game[i].count_big_cells(next_game[i].my_board) < next_game[i].count_big_cells(next_game[i].opp_board))
-					continue;
-				children[children_count++] = State(next_game[i], this);
-			}
-		}
-		return children;
 	}
-
-	float UCB1()
-	{
-		if (parent == NULL)
-			return -1;
-		
-		if (visit_count == 0)
-			return __builtin_huge_valf();
-		
-		return (value / visit_count) + 2 * sqrt(::log(parent->visit_count) / visit_count);
-	}
-
-	State * max_UCB1_child()
-	{
-		State *child = NULL;
-		float max_UCB1 = 0;
-		for (size_t i = 0; i < children_count; i++)
-		{
-			float UCB1 = children[i].UCB1();
-			if (UCB1 > max_UCB1)
-			{
-				max_UCB1 = UCB1;
-				child = &children[i];
-			}
-		}
-		return child;
-	}
-
-	void backpropagate(float new_value, State * root, int expanded_child_count)
-	{
-		visit_count++;
-		value += new_value;
-		if (parent != NULL && this != root)
-			parent->backpropagate(new_value, root, expanded_child_count);
-	}
-
-	float rollout()
-	{
-		Game g = game;
-		while (!g.rollout_should_stop())
-		{
-			g.play(g.rand_action());
-		}
-		return g.result();
-	}
-
-	State * max_average_value_child()
-	{
-		if (children_count == 0)
-			return NULL;
-		State *child = &children[0];
-		float max_average_value = -1;
-		for (size_t i = 0; i < children_count; i++)
-		{
-			float average_value = children[i].value / children[i].visit_count;
-			if (average_value > max_average_value)
-			{
-				max_average_value = average_value;
-				child = &children[i];
-			}
-		}
-		return child;
-	}
-
-	void log()
-	{
-		std::cerr << "State{t=" << setw(7) << left << value <<
-			",n=" << setw(5) << left << visit_count <<
-			",av=" << setw(10) << left << value / visit_count <<
-			",action=" << (game.last_action_index != -1 ? index_to_pos[game.last_action_index] : "none") <<
-			"}" << std::endl;
-	}
-
 };
 
-State * opponentPlay(State * state, uint8_t action)
+Game * opponentPlay(Game * game, uint8_t action)
 {
-	for (size_t i = 0; i < state->children_count; i++)
+	for (size_t i = 0; i < game->children_count; i++)
 	{
-		if (action == state->children[i].game.last_action_index)
-			return &(state->children[i]);
+		if (action == game->children[i].last_action_index)
+			return &(game->children[i]);
 	}
 	std::cerr << "Invalid action " << int(action) << " in:" << std::endl;
-	for (size_t i = 0; i < state->children_count; i++)
+	for (size_t i = 0; i < game->children_count; i++)
 	{
-		std::cerr << int(state->children[i].game.last_action_index) << " ";
+		std::cerr << int(game->children[i].last_action_index) << " ";
 	}
 	std::cerr << std::endl;
-	state->game.log();
+	game->log();
 	exit(1);
-	return state;
+	return game;
 }
 
 void readInput(uint8_t & opp_action, int * valid_action)
@@ -554,77 +418,118 @@ void readInput(uint8_t & opp_action, int * valid_action)
 	}
 }
 
-void generateInput(State * current, uint8_t & opp_action, int * valid_action)
+void generateInput(Game * current, uint8_t & opp_action, int * valid_action)
 {
-	opp_action = current->children[random(0, current->children_count)].game.last_action_index;
+	opp_action = action_index(current->rand_action());
 }
 
-void generateFirstInput(State * current, uint8_t & opp_action, int * valid_action)
-{
-	// opp_action = -1;
-	opp_action = action_index(current->game.rand_action());
-}
 
-State * mcts(State * initial_state, Timer start, float timeout)
+int visited_state = 0;
+int simulate(Game * current, Timer start, float timeout)
 {
-	State * current;
-	int nb_of_simule = 0;
+	double diff = start.diff(false);
+	if (diff > timeout)
+		return -1;
+	
+	visited_state++;
 
-	while (true)
+	if (current->is_final())
+		return current->result();
+	
+
+	if (current->children == NULL)
+		current->expand();
+
 	{
-		current = initial_state;
-		
-		while (current->children_count > 0)
-			current = current->max_UCB1_child();
-		
-		int extended_state_count = 0;
-		if (current->visit_count > 0)
+		for (size_t i = 0; i < current->children_count; i++)
 		{
-			State * tmp = current;
-			current = current->expand();
-			extended_state_count = tmp->children_count;
+			if (current->children[i].visited || !current->children[i].is_final())
+				continue;
+	
+			int result = current->children[i].result();
+			if (result == -1)
+				return -1;
+	
+			if (current->my_turn)
+			{
+				if (result == 1)
+				{
+					current->force_win = true;
+					current->visited = true;
+					return 1;
+				}
+			}
+			else
+			{
+				if (result == 0)
+				{
+					current->force_lose = true;
+					current->visited = true;
+					return 0;
+				}
+			}
 		}
-		
-		float value = current->rollout();
-		
-		current->backpropagate(value, initial_state, extended_state_count);
-		
-		nb_of_simule++;
-
-		double diff = start.diff(false);
-		if (diff > timeout)
-			break;
 	}
 
-	std::cerr << "Simulation result:" << std::endl;
-	std::cerr << "time = " << start.diff() << std::endl;
-	std::cerr << "count = " << nb_of_simule << std::endl;
 
-	return initial_state->max_average_value_child();
-}
-
-State * mcts(State * initial_state, int max_iter)
-{
-	State *current;
-	int nb_of_simule = 0;
-
-	while (nb_of_simule < max_iter)
+	bool all_children_win = true;
+	bool all_children_lose = true;
+	for (size_t i = 0; i < current->children_count; i++)
 	{
-		current = initial_state;
+		if (current->children[i].visited)
+			continue;
 
-		while (current->children_count > 0)
-			current = current->max_UCB1_child();
+		int result = simulate(&current->children[i], start, timeout);
+		if (result == -1)
+			return -1;
+		
+		if (result == 1)
+			all_children_lose = false;
+		if (result == 0)
+			all_children_win = false;
 
-		if (current->visit_count > 0)
-			current = current->expand();
-
-		float value = current->rollout();
-
-		current->backpropagate(value, initial_state, 0);
-
-		nb_of_simule++;
+		if (current->my_turn)
+		{
+			if (result == 1)
+			{
+				current->force_win = true;
+				current->visited = true;
+				return 1;
+			}
+		}
+		else
+		{
+			if (result == 0)
+			{
+				current->force_lose = true;
+				current->visited = true;
+				return 0;
+			}
+		}
 	}
-	return initial_state->max_average_value_child();
+
+	if (current->my_turn)
+	{
+		if (all_children_lose)
+		{
+			current->force_lose = true;
+			current->visited = true;
+			return 0;
+		}
+	}
+	else
+	{
+		if (all_children_win)
+		{
+			current->force_win = true;
+			current->visited = true;
+			return 1;
+		}
+	}
+
+
+	current->visited = true;
+	return 0;
 }
 
 
@@ -635,13 +540,14 @@ State * mcts(State * initial_state, int max_iter)
 // 	Game game = Game(0, 0, 0, -1);
 // 	game.compute_first_valid_action();
 
-// 	State *state = new State(game, NULL);
-
 // 	Timer start;
 
-// 	State *child = mcts(state, start, 1000);
+// 	simulate(&game, start, 1000);
 
-// 	delete state;
+// 	std::cerr << "Simulation result:" << std::endl;
+// 	std::cerr << "time = " << start.diff() << std::endl;
+// 	std::cerr << "count = " << visited_state << std::endl;
+
 // 	return 0;
 // }
 
@@ -707,78 +613,118 @@ int main()
 {
 	srand(time(NULL));
 
-	uint8_t opp_action = -1;
+	uint8_t opp_action;
 	int valid_action[81];
 
-	Game initial_game = Game(0, 0, 0, -1);
+	Game initial_game = Game(0, 0, 0, -1, NULL);
 	initial_game.compute_first_valid_action();
-	State *initial_state = new State(initial_game, NULL);
 
-	State *current = initial_state;
+	Game *current = &initial_game;
 
 
 	{ // first turn
-		readInput(opp_action, valid_action);
-		// generateFirstInput(current, opp_action, valid_action);
+		// readInput(opp_action, valid_action);
+		generateInput(current, opp_action, valid_action);
 		Timer start;
 	
 		if (opp_action != -1)
-			current->game.play(action_mask(opp_action));
+			current->play(action_mask(opp_action));
 		else
-			current->game.my_turn = 1;
+			current->my_turn = 1;
 	
-		State *child = mcts(current, start, 990);
+		visited_state = 0;
+		simulate(current, start, 990);
+
+		std::cerr << "Simulation result:" << std::endl;
+		std::cerr << "time = " << start.diff() << std::endl;
+		std::cerr << "count = " << visited_state << std::endl;
+
+		int visited_state_children = 0;
+		Game *child = current->children;
+		for (size_t i = 0; i < current->children_count; i++)
+		{
+			if (current->children[i].visited)
+				visited_state_children++;
+
+			if (child->force_lose)
+			{
+				child = &current->children[i];
+				if (child->force_win)
+					break;
+			}
+		}
+
+		std::cerr << "visited_state_children = " << visited_state_children << " / " << current->children_count << std::endl;
 	
 		if (child == NULL)
 		{
-			std::cerr << "mcts did not return any action" << std::endl;
+			std::cerr << "There is no children" << std::endl;
 			cout << index_to_pos[valid_action[0]] << std::endl;
 			current = opponentPlay(current, valid_action[0]);
 		}
 		else
 		{
-			cout << index_to_pos[child->game.last_action_index] << std::endl;
+			cout << index_to_pos[child->last_action_index] << std::endl;
 			std::cerr << "response time " << start.diff() << std::endl;
 			current = child;
 		}
-		// current->game.log();
+		// current->log();
 		std::cerr << std::endl;
 	}
 
 	while (1)
 	{
-		if (current->game.is_final())
+		if (current->is_final())
 			break;
 
-		readInput(opp_action, valid_action);
-		// generateInput(current, opp_action, valid_action);
+		// readInput(opp_action, valid_action);
+		generateInput(current, opp_action, valid_action);
 		Timer start;
 
-		if (current->game.is_final())
+		if (current->is_final())
 			break;
 
 		current = opponentPlay(current, opp_action);
 
-		// current->game.log();
-		State *child = mcts(current, start, 90);
+		visited_state = 0;
+		simulate(current, start, 90);
+
+		std::cerr << "Simulation result:" << std::endl;
+		std::cerr << "time = " << start.diff() << std::endl;
+		std::cerr << "count = " << visited_state << std::endl;
+
+		// current->log();
+		int visited_state_children = 0;
+		Game *child = current->children;
+		for (size_t i = 0; i < current->children_count; i++)
+		{
+			if (current->children[i].visited)
+				visited_state_children++;
+			if (current->children[i].force_win)
+			{
+				child = &current->children[i];
+				break;
+			}
+		}
+
+		std::cerr << "visited_state_children = " << visited_state_children << " / " << current->children_count << std::endl;
 
 		if (child == NULL)
 		{
-			std::cerr << "mcts did not return any action" << std::endl;
+			std::cerr << "There is no children" << std::endl;
 			cout << index_to_pos[valid_action[0]] << std::endl;
 			current = opponentPlay(current, valid_action[0]);
 		}
 		else
 		{
-			cout << index_to_pos[child->game.last_action_index] << std::endl;
+			cout << index_to_pos[child->last_action_index] << std::endl;
 			std::cerr << "response time " << start.diff() << std::endl;
 			current = child;
 		}
-		// current->game.log();
+		// current->log();
 		std::cerr << std::endl;
 	}
 
-	std::cerr << "result = " << current->game.result() << std::endl;
-	delete initial_state;
+	std::cerr << "result = " << current->result() << std::endl;
 }
 

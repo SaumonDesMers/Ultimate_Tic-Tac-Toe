@@ -69,15 +69,6 @@ constexpr Mask16 test_CFI = 0b100100100;
 constexpr Mask16 test_AEI = 0b100010001;
 constexpr Mask16 test_CEG = 0b001010100;
 
-constexpr Mask128 test_ABC_big = int128(0b111111111111111111111111111);
-constexpr Mask128 test_DEF_big = int128(0b111111111111111111111111111) << 27;
-constexpr Mask128 test_GHI_big = int128(0b111111111111111111111111111) << 54;
-constexpr Mask128 test_ADG_big = int128(0b111111111000000000000000000111111111000000000000000000111111111);
-constexpr Mask128 test_BEH_big = int128(0b111111111000000000000000000111111111000000000000000000111111111) << 9;
-constexpr Mask128 test_CFI_big = int128(0b111111111000000000000000000111111111000000000000000000111111111) << 18;
-constexpr Mask128 test_AEI_big = int128(0b111111111000000000000000000000000000111111111) | (int128(0b111111111) << 72);
-constexpr Mask128 test_CEG_big = int128(0b000000000000000000111111111000000000111111111000000000111111111000000000000000000);
-
 constexpr Mask128 board_mask = ~(int128(0x7fffffffffff) << 81);
 
 // uint64_t shuffle_table[2] = {static_cast<uint64_t>(time(NULL)), static_cast<uint64_t>(time(NULL)) >> 16};
@@ -204,18 +195,6 @@ struct Game
 				((board & test_CFI) == test_CFI) ||
 				((board & test_AEI) == test_AEI) ||
 				((board & test_CEG) == test_CEG);
-	}
-
-	int is_big_board_final(Mask128 board)
-	{
-		return ((board & test_ABC_big) == test_ABC_big) ||
-				((board & test_DEF_big) == test_DEF_big) ||
-				((board & test_GHI_big) == test_GHI_big) ||
-				((board & test_ADG_big) == test_ADG_big) ||
-				((board & test_BEH_big) == test_BEH_big) ||
-				((board & test_CFI_big) == test_CFI_big) ||
-				((board & test_AEI_big) == test_AEI_big) ||
-				((board & test_CEG_big) == test_CEG_big);
 	}
 
 	void compute_first_valid_action()
@@ -427,9 +406,6 @@ struct State
 
 	float UCB1()
 	{
-		if (parent == NULL)
-			return -1;
-		
 		if (visit_count == 0)
 			return __builtin_huge_valf();
 		
@@ -442,7 +418,7 @@ struct State
 		float max_UCB1 = 0;
 		for (size_t i = 0; i < children_count; i++)
 		{
-			float UCB1 = children[i].UCB1();
+			const float UCB1 = children[i].UCB1();
 			if (UCB1 > max_UCB1)
 			{
 				max_UCB1 = UCB1;
@@ -452,7 +428,7 @@ struct State
 		return child;
 	}
 
-	void backpropagate(float new_score, State * root)
+	void backpropagate(const float new_score, const State * root)
 	{
 		visit_count++;
 		score += new_score;
@@ -477,7 +453,7 @@ struct State
 		float max_average_score = -1;
 		for (size_t i = 0; i < children_count; i++)
 		{
-			float average_score = children[i].score / children[i].visit_count;
+			const float average_score = children[i].score / children[i].visit_count;
 			if (average_score > max_average_score)
 			{
 				max_average_score = average_score;
@@ -574,7 +550,7 @@ State * mcts(State * initial_state, Timer start, float timeout)
 		expand_time_sum += expand_time.diff(false);
 		
 		rollout_time.set();
-		float score = current->rollout();
+		const float score = current->rollout();
 		rollout_time_sum += rollout_time.diff(false);
 		
 		backprobagate_time.set();
@@ -608,40 +584,28 @@ State * mcts(State * initial_state, Timer start, float timeout)
 	// std::cerr << "best move: " << index_to_pos[best_child->game.last_action_index] << std::endl;
 	// std::cerr << "best opponent move: " << index_to_pos[best_child->best_child()->game.last_action_index] << std::endl;
 
-	// for (size_t i = 0; i < initial_state->children_count; i++)
-	// {
-	// 	std::cerr << index_to_pos[initial_state->children[i].game.last_action_index]
-	// 		<< " (" << (initial_state->children[i].score / initial_state->children[i].visit_count) << "):";
-	// 	for (size_t j = 0; j < initial_state->children[i].children_count; j++)
-	// 	{
-	// 		std::cerr << " " << index_to_pos[initial_state->children[i].children[j].game.last_action_index]
-	// 			<< "(" << (initial_state->children[i].children[j].score / initial_state->children[i].children[j].visit_count) << ")";
-	// 	}
-	// 	std::cerr << std::endl;
-	// }
-
 	return best_child;
 }
 
 
-int main()
-{
-	srand(time(NULL));
+// int main()
+// {
+// 	srand(time(NULL));
 
-	Game game = Game(0, 0, 0, -1);
-	game.compute_first_valid_action();
+// 	Game game = Game(0, 0, 0, -1);
+// 	game.compute_first_valid_action();
 
-	State * state = new State(game, NULL);
+// 	State * state = new State(game, NULL);
 
-	Timer start;
+// 	Timer start;
 
-	State * child = mcts(state, start, 1000);
+// 	State * child = mcts(state, start, 1000);
 
-	delete state;
-	return 0;
-}
+// 	delete state;
+// 	return 0;
+// }
 
-/*
+
 int main()
 {
 	srand(time(NULL));
@@ -719,4 +683,4 @@ int main()
 	std::cerr << "score = " << current->game.score() << std::endl;
 	delete initial_state;
 }
-*/
+

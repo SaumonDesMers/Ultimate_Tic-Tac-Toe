@@ -409,7 +409,7 @@ struct State
 		if (visit_count == 0)
 			return __builtin_huge_valf();
 		
-		return (score / visit_count) + 2 * sqrt(::log(parent->visit_count) / visit_count);
+		return (score / visit_count) + 0.5 * sqrt(::log(parent->visit_count) / visit_count);
 	}
 
 	State * max_UCB1_child()
@@ -527,39 +527,39 @@ State * mcts(State * initial_state, Timer start, float timeout)
 	State * current;
 	int nb_of_simule = 0;
 
-	Timer total_time; double total_time_sum;
-	Timer tree_traversal_time; double tree_traversal_time_sum;
-	Timer expand_time; double expand_time_sum;
-	Timer rollout_time; double rollout_time_sum;
-	Timer backprobagate_time; double backprobagate_time_sum;
+	// Timer total_time; double total_time_sum;
+	// Timer tree_traversal_time; double tree_traversal_time_sum;
+	// Timer expand_time; double expand_time_sum;
+	// Timer rollout_time; double rollout_time_sum;
+	// Timer backprobagate_time; double backprobagate_time_sum;
 
 	while (true)
 	{
 		current = initial_state;
 
-		total_time.set();
+		// total_time.set();
 
-		tree_traversal_time.set();
+		// tree_traversal_time.set();
 		while (current->children_count > 0)
 			current = current->max_UCB1_child();
-		tree_traversal_time_sum += tree_traversal_time.diff(false);
+		// tree_traversal_time_sum += tree_traversal_time.diff(false);
 		
-		expand_time.set();
+		// expand_time.set();
 		if (current->visit_count > 0)
 			current = current->expand();
-		expand_time_sum += expand_time.diff(false);
+		// expand_time_sum += expand_time.diff(false);
 		
-		rollout_time.set();
+		// rollout_time.set();
 		const float score = current->rollout();
-		rollout_time_sum += rollout_time.diff(false);
+		// rollout_time_sum += rollout_time.diff(false);
 		
-		backprobagate_time.set();
+		// backprobagate_time.set();
 		current->backpropagate(score, initial_state);
-		backprobagate_time_sum += backprobagate_time.diff(false);
+		// backprobagate_time_sum += backprobagate_time.diff(false);
 
-		total_time_sum += total_time.diff(false);
+		// total_time_sum += total_time.diff(false);
 		
-		nb_of_simule++;
+		// nb_of_simule++;
 
 		double diff = start.diff(false);
 		if (diff > timeout)
@@ -569,16 +569,16 @@ State * mcts(State * initial_state, Timer start, float timeout)
 	std::cerr << "Simulation result:" << std::endl;
 	std::cerr << "count = " << nb_of_simule << std::endl;
 	std::cerr << "time = " << start.diff() << std::endl;
-	double total_time_avg = total_time_sum / nb_of_simule * 1000;
-	double tree_traversal_time_avg = tree_traversal_time_sum / nb_of_simule * 1000;
-	double expand_time_avg = expand_time_sum / nb_of_simule * 1000;
-	double rollout_time_avg = rollout_time_sum / nb_of_simule * 1000;
-	double backprobagate_time_avg = backprobagate_time_sum / nb_of_simule * 1000;
-	std::cerr << "total time avg           = " << total_time_avg << " ms" << std::endl;
-	std::cerr << "tree traversal time avg  = " << tree_traversal_time_avg << " ms (" << (tree_traversal_time_avg / total_time_avg) * 100 << "%)" << std::endl;
-	std::cerr << "expand time avg          = " << expand_time_avg << " ms (" << (expand_time_avg / total_time_avg) * 100 << "%)" << std::endl;
-	std::cerr << "rollout time avg         = " << rollout_time_avg << " ms (" << (rollout_time_avg / total_time_avg) * 100 << "%)" << std::endl;
-	std::cerr << "backprobagate time avg   = " << backprobagate_time_avg << " ms (" << (backprobagate_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+	// double total_time_avg = total_time_sum / nb_of_simule * 1000;
+	// double tree_traversal_time_avg = tree_traversal_time_sum / nb_of_simule * 1000;
+	// double expand_time_avg = expand_time_sum / nb_of_simule * 1000;
+	// double rollout_time_avg = rollout_time_sum / nb_of_simule * 1000;
+	// double backprobagate_time_avg = backprobagate_time_sum / nb_of_simule * 1000;
+	// std::cerr << "total time avg           = " << total_time_avg << " ms" << std::endl;
+	// std::cerr << "tree traversal time avg  = " << tree_traversal_time_avg << " ms (" << (tree_traversal_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+	// std::cerr << "expand time avg          = " << expand_time_avg << " ms (" << (expand_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+	// std::cerr << "rollout time avg         = " << rollout_time_avg << " ms (" << (rollout_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+	// std::cerr << "backprobagate time avg   = " << backprobagate_time_avg << " ms (" << (backprobagate_time_avg / total_time_avg) * 100 << "%)" << std::endl;
 
 	State * best_child = initial_state->best_child();
 	// std::cerr << "best move: " << index_to_pos[best_child->game.last_action_index] << std::endl;

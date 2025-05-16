@@ -176,7 +176,8 @@ def game_turn(bot, game, timeout):
 	return True
 
 def run_game(bot1_args, bot2_args):
-	bot1 = subprocess.Popen(bot1_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+	stderr_file = open("stderr.txt", "w")
+	bot1 = subprocess.Popen(bot1_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr_file, text=True)
 	bot2 = subprocess.Popen(bot2_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 	current_bot = bot1
@@ -185,12 +186,14 @@ def run_game(bot1_args, bot2_args):
 	game = Game()
 
 	game_turn(current_bot, game, 1)
+	# print()
 	game_turn(other_bot, game, 1)
+	# print()
 
 	while True:
 		if game_turn(current_bot, game, 0.1) == False:
 			break
-
+		# print()
 		current_bot, other_bot = other_bot, current_bot
 	
 	bot1.terminate()
@@ -198,31 +201,52 @@ def run_game(bot1_args, bot2_args):
 
 	return game.winner()
 
+def run_games(bot1, bot2, num_games):
+	for i in range(num_games):
+		print(f"Game {i}...")
+		winner = run_game(bot1["args"], bot2["args"])
+		if winner == 0:
+			bot1["draw"] += 1
+			bot2["draw"] += 1
+		elif winner == 1:
+			bot1["win"] += 1
+		elif winner == 2:
+			bot2["win"] += 1	
 
 def main():
-	bot1_args = ["./a.out"]
-	bot2_args = ["./a.out"]
+	bot1 = {
+		"args": ["./best_bot"],
+		"win": 0,
+		"draw": 0
+	}
+	bot2 = {
+		"args": ["./new_bot"],
+		"win": 0,
+		"draw": 0
+	}
 
-	bot1_win_count = 0
-	bot2_win_count = 0
-	draw_count = 0
+	# run_game(bot2["args"], bot1["args"])
 
-	simulate_count = 50
-	print(f"Simulating {simulate_count} games (~ {simulate_count * 7 / 60} minutes)...")
+	run_games(bot1, bot2, 10)
+	print()
+	print(bot1["args"][0], "vs", bot2["args"][0])
+	print("Bot 1 wins:", bot1["win"])
+	print("Bot 2 wins:", bot2["win"])
+	print("Draws:", bot1["draw"])
+	print()
 
-	for i in range(50):
-		print(f"Game {i}...")
-		winner = run_game(bot1_args, bot2_args)
-		if winner == 0:
-			draw_count += 1
-		elif winner == 1:
-			bot1_win_count += 1
-		elif winner == 2:
-			bot2_win_count += 1	
+	bot1["win"] = 0
+	bot1["draw"] = 0
+	bot2["win"] = 0
+	bot2["draw"] = 0
+
+	run_games(bot2, bot1, 10)
+	print()
+	print(bot2["args"][0], "vs", bot1["args"][0])
+	print("Bot 1 wins:", bot1["win"])
+	print("Bot 2 wins:", bot2["win"])
+	print("Draws:", bot1["draw"])
 	
-	print(f"Bot 1 wins: {bot1_win_count}")
-	print(f"Bot 2 wins: {bot2_win_count}")
-	print(f"Draws: {draw_count}")
 
 if __name__ == '__main__':
 	main()

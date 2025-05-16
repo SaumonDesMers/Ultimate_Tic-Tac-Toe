@@ -1,11 +1,9 @@
 #ifndef DEBUG
 	#undef _GLIBCXX_DEBUG
-	#pragma GCC optimize "Ofast,unroll-loops,omit-frame-pointer,inline"
-	#pragma GCC option("arch=native", "tune=native", "no-zero-upper")
-	// #ifndef POPCNT
-	#pragma GCC target("movbe,aes,pclmul,avx,avx2,f16c,fma,sse3,ssse3,sse4.1,sse4.2,rdrnd,popcnt,bmi,bmi2,lzcnt")
-	// #endif
+	#pragma GCC optimize("O2,unroll-loops,omit-frame-pointer,inline")
+	// #pragma GCC option("arch=native", "tune=native", "no-zero-upper")
 #endif
+#pragma GCC target("movbe,aes,pclmul,avx,avx2,f16c,fma,sse3,ssse3,sse4.1,sse4.2,rdrnd,popcnt,bmi,bmi2,lzcnt")
 
 #include <iostream>
 #include <string>
@@ -15,12 +13,16 @@
 #include <ctime>
 #include <iomanip>
 #include <cstring>
+#include <immintrin.h>
 
 #define int128(x) static_cast<__int128_t>(x)
-#define FULL_ONE_MASK ~(int128(0x7fffffffffff) << 81)
 #define random(min, max) min + rand() % (max - min)
-#define actionIndex(am) int(int128_ffs(am) - 1)
-#define actionMask(ai) (int128(1) << ai)
+#define action_index(am) int(ffs128(am) - 1)
+#define action_mask(ai) (int128(1) << (ai))
+
+#define get_small_board(board, i) ((board >> ((i) * 9)) & 0x1ff)
+#define get_small_board_mask(i) (int128(0x1ff) << ((i) * 9))
+#define get_big_board(board) ((board >> 81) & 0x1ff)
 
 using namespace std;
 
@@ -49,39 +51,25 @@ typedef __int16_t Mask16;
 	60 61 62 | 69 70 71 | 78 79 80
 
 	Small game distribution in Mask128:
-													 board 8   board 7   board 6   board 5   board 4   board 3   board 2   board 1   board 0
-	00000000000000000000000000000000000000000000000 000000000 000000000 000000000 000000000 000000000 000000000 000000000 000000000 000000000
+										   big board  board 8   board 7   board 6   board 5   board 4   board 3   board 2   board 1   board 0
+	00000000000000000000000000000000000000 000000000 000000000 000000000 000000000 000000000 000000000 000000000 000000000 000000000 000000000
 
 	Mask to test if board is finished:
 	A B C
 	D E F --> I H G F E D C B A
 	G H I
-
-	ABC = 000000111 = 0x7
-	DEF = 000111000 = 0x38
-	GHI = 111000000 = 0x1c0
-	ADG = 001001001 = 0x49
-	BEH = 010010010 = 0x92
-	CFI = 100100100 = 0x124
-	AEI = 100010001 = 0x111
-	CEG = 001010100 = 0x54
-
-
-	o o o | . . . | . . .
-	o   o | . . . | . . .
-	o o o | . . . | . . .
-	------|-------|------
-	. . . | x   x | . . .
-	. . . |   x   | . . .
-	. . . | x   x | . . .
-	------|-------|------
-	. . . | . . . | . . .
-	. . . | . . . | . . .
-	. . . | . . . | . . .
-
 */
 
-int stateId = 0;
+constexpr Mask16 test_ABC = 0b000000111;
+constexpr Mask16 test_DEF = 0b000111000;
+constexpr Mask16 test_GHI = 0b111000000;
+constexpr Mask16 test_ADG = 0b001001001;
+constexpr Mask16 test_BEH = 0b010010010;
+constexpr Mask16 test_CFI = 0b100100100;
+constexpr Mask16 test_AEI = 0b100010001;
+constexpr Mask16 test_CEG = 0b001010100;
+
+constexpr Mask128 board_mask = ~(int128(0x7fffffffffff) << 81);
 
 // uint64_t shuffle_table[2] = {static_cast<uint64_t>(time(NULL)), static_cast<uint64_t>(time(NULL)) >> 16};
 // uint64_t random(int min, int max)
@@ -114,9 +102,7 @@ struct Timer
 	}
 } timer;
 
-const Mask128 fullOneMask = ~(int128(0x7fffffffffff) << 81);
-
-const int gameIndexToStrIndex[81] = {
+const int game_index_to_str_index[81] = {
 	0,2,4,22,24,26,44,46,48,
 	8,10,12,30,32,34,52,54,56,
 	16,18,20,38,40,42,60,62,64,
@@ -128,7 +114,7 @@ const int gameIndexToStrIndex[81] = {
 	192,194,196,214,216,218,236,238,240
 };
 
-const string indexToPos[81] = {
+const char index_to_pos[81][4] = {
 	"0 0","0 1","0 2","1 0","1 1","1 2","2 0","2 1","2 2",
 	"0 3","0 4","0 5","1 3","1 4","1 5","2 3","2 4","2 5",
 	"0 6","0 7","0 8","1 6","1 7","1 8","2 6","2 7","2 8",
@@ -140,7 +126,7 @@ const string indexToPos[81] = {
 	"6 6","6 7","6 8","7 6","7 7","7 8","8 6","8 7","8 8",
 };
 
-const int posToIndex[9][9] = {
+const int pos_to_index[9][9] = {
 	{ 0,  1,  2,  9, 10, 11, 18, 19, 20},
 	{ 3,  4,  5, 12, 13, 14, 21, 22, 23},
 	{ 6,  7,  8, 15, 16, 17, 24, 25, 26},
@@ -152,277 +138,153 @@ const int posToIndex[9][9] = {
 	{60, 61, 62, 69, 70, 71, 78, 79, 80},
 };
 
-uint_fast8_t int128_ffs(__int128_t n)
+uint_fast8_t ffs128(__int128_t n)
 {
 	const uint_fast8_t cnt_hi = __builtin_ffsll(n >> 64);
 	const uint_fast8_t cnt_lo = __builtin_ffsll(n);
 	return cnt_lo ? cnt_lo : cnt_hi + 64;
 }
 
-uint_fast8_t int128_popcount(__int128_t n)
+uint_fast8_t ctz128(__int128_t n)
+{
+	const uint_fast8_t cnt_hi = __builtin_ctzll(n >> 64);
+	const uint_fast8_t cnt_lo = __builtin_ctzll(n);
+	return cnt_lo ? cnt_lo : cnt_hi + 64;
+}
+
+uint_fast8_t popcount128(__int128_t n)
 {
 	const uint_fast8_t cnt_hi = __builtin_popcountll(n >> 64);
 	const uint_fast8_t cnt_lo = __builtin_popcountll(n);
 	return cnt_lo + cnt_hi;
 }
 
-template<class Mask>
-string mtos(Mask mask, size_t size)
+template <typename T>
+void print_binary(T x, int width = sizeof(T) * 8)
 {
-	string str;
-	for (size_t i = 0; i < size; i++)
-	{
-		if (i % 9 == 0)
-			str.insert(0, " ");
-		str.insert(0, to_string(int(mask & 1)));
-		mask >>= 1;
-	}
-	return str;
+	for (int i = width; i >= 0; --i)
+		std::cerr << ((x >> i) & 1 ? '1' : '0');
+	std::cerr << std::endl;
 }
 
 struct Game
 {
-	Mask16 myBigBoard;
-	Mask16 oppBigBoard;
-	Mask128 myBoard;
-	Mask128 oppBoard;
-	Mask128 nonFreeCell;
-	Mask128 validAction;
-	Mask128 lastAction;
-	int myTurn;
-	int validActionCount;
-	int validActionComputed;
-	int depth;
+	Mask128 my_board;
+	Mask128 opp_board;
+	Mask128 valid_action;
+	int8_t last_action_index;
+	int8_t my_turn;
+	int8_t valid_action_count;
 
-	Game(Mask16 _myBigBoard, Mask16 _oppBigBoard, Mask128 _myBoard, Mask128 _oppBoard, int _myTurn, Mask128 _lastAction, int _depth) :
-		myBigBoard(_myBigBoard),
-		oppBigBoard(_oppBigBoard),
-		myBoard(_myBoard),
-		oppBoard(_oppBoard),
-		nonFreeCell(0),
-		myTurn(_myTurn),
-		lastAction(_lastAction),
-		validActionCount(0),
-		validActionComputed(false),
-		depth(_depth)
-		{
-			computeValidAction();
-		}
+	Game() {}
+	Game(Mask128 _my_board, Mask128 _opp_board, int _my_turn, int8_t _last_action_index) :
+		my_board(_my_board),
+		opp_board(_opp_board),
+		my_turn(_my_turn),
+		last_action_index(_last_action_index),
+		valid_action_count(0)
+	{}
 
-	Game(const Game &src) :
-		myBigBoard(src.myBigBoard),
-		oppBigBoard(src.oppBigBoard),
-		myBoard(src.myBoard),
-		oppBoard(src.oppBoard),
-		nonFreeCell(src.nonFreeCell),
-		validAction(src.validAction),
-		myTurn(src.myTurn),
-		lastAction(src.lastAction),
-		validActionCount(src.validActionCount),
-		validActionComputed(src.validActionComputed),
-		depth(src.depth) {}
-
-	Game &operator=(const Game &src)
+	int is_board_final(Mask16 board)
 	{
-		myBigBoard = src.myBigBoard;
-		oppBigBoard = src.oppBigBoard;
-		myBoard = src.myBoard;
-		oppBoard = src.oppBoard;
-		nonFreeCell = src.nonFreeCell;
-		validAction = src.validAction;
-		myTurn = src.myTurn;
-		lastAction = src.lastAction;
-		validActionCount = src.validActionCount;
-		validActionComputed = src.validActionComputed;
-		depth = src.depth;
-		return *this;
+		return ((board & test_ABC) == test_ABC) ||
+				((board & test_DEF) == test_DEF) ||
+				((board & test_GHI) == test_GHI) ||
+				((board & test_ADG) == test_ADG) ||
+				((board & test_BEH) == test_BEH) ||
+				((board & test_CFI) == test_CFI) ||
+				((board & test_AEI) == test_AEI) ||
+				((board & test_CEG) == test_CEG);
 	}
 
-	Mask128 getUniqueSmallBoard(Mask128 board, int i) { return (board >> (i * 9)) & 0x1ff; }
-
-	Mask128 smallBoardMask(int i) { return (int128(0x1ff) << (i * 9)); }
-
-	bool isSmallBoardFinal(int i) { return (((myBigBoard | oppBigBoard) >> i) & 1); }
-
-	int firstActionIndex(Mask128 mask) { return int128_ffs(validAction) - 1; }
-
-	template<class Mask>
-	int boardIsFinal(Mask board)
+	void compute_first_valid_action()
 	{
-		// the board must be at the right of the mask
-		const Mask winMask[8] = {0x7,0x38,0x1c0,0x49,0x92,0x124,0x111,0x54};
-
-		for (size_t i = 0; i < 8; i++)
-		{
-			// maybe test "!(winMask[i] ^ (board & winMask))" to see if it's faster
-			if (winMask[i] == (board & winMask[i]))
-				return 1;
-		}
-		return 0;
+		valid_action = action_mask(40);
+		valid_action_count = 1;
 	}
 
-	void computeValidAction()
+	int get_action_list(Mask128 action_list[81])
 	{
-		if (validActionComputed)
-			return;
-
-		// std::cerr << "Compute valid action" << std::endl;
-		// std::cerr << "nonFreeCell  = " << mtos(nonFreeCell, 81) << std::endl;
-		// std::cerr << "myBoard	  = " << mtos(myBoard, 81) << std::endl;
-		// std::cerr << "oppBoard	 = " << mtos(oppBoard, 81) << std::endl;
-
-		// cumule finished small board with the two players board
-		Mask128 freeCellMask = ~(nonFreeCell | myBoard | oppBoard);
-		// std::cerr << "freeCellMask = " << mtos(freeCellMask, 81) << std::endl;
-
-		// get valid action by filtering only the free cells in the small board where you are forced to play
-		// but if there is no last action: juste play in the middle
-		// std::cerr << "action index = " << actionIndex(lastAction) << std::endl;
-		Mask128 forcePlay = (lastAction == -1 ? int128(1) << 40 : smallBoardMask(actionIndex(lastAction) % 9));
-		// std::cerr << "forcePlay	= " << mtos(forcePlay, 81) << std::endl;
-		validAction = freeCellMask & forcePlay;
-		// std::cerr << "validAction  = " << mtos(validAction, 81) << std::endl;
-
-		// if there is no valid action: play where you want
-		validAction = (validAction ? validAction : freeCellMask) & fullOneMask;
-		// std::cerr << "validAction  = " << mtos(validAction, 81) << std::endl;
-
-		validActionCount = int128_popcount(validAction);
-		validActionComputed = true;
-	}
-
-	int getActionList(int actionList[81])
-	{
-		int action = firstActionIndex(validAction);
-		Mask128 validActionMask = validAction >> action;
 		int i = 0;
-		// loop while there is still a 1 (i.e. an action)
-		while (validActionMask)
+		Mask128 valid_action_copy = valid_action;
+		while (valid_action_copy)
 		{
-			// test if action is valid
-			if (validAction & (int128(1) << action))
-			{
-				actionList[i++] = action;
-			}
-			validActionMask >>= 1;
-			action++;
+			action_list[i++] = valid_action_copy & -valid_action_copy;
+			valid_action_copy &= (valid_action_copy - 1);
 		}
-		return validActionCount;
+		return valid_action_count;
 	}
 
-	Mask128 randAction()
+	Mask128 rand_action()
 	{
-		// std::cerr << "rand action" << std::endl;
-		int randIndex = (validActionCount == 1 ? 0 : random(0, validActionCount - 1));
-		// get past trailing zero
-		Mask128 action = int128(1) << firstActionIndex(validAction);
-		// loop there is still a 1 (e.i. an action)
-		// log();
-		// std::cerr << "randIndex = " << randIndex << ", action = " << actionIndex(action) << std::endl;
-		// std::cerr << mtos(validAction, 81) << std::endl;
-		// std::cerr << mtos(action, 81) << std::endl;
-		while (randIndex > 0 || !(action & validAction))
+		const uint64_t low = (uint64_t)valid_action;
+		const uint64_t high = (uint64_t)(valid_action >> 64);
+		const uint64_t pop_low = __builtin_popcountll(low);
+		const uint64_t r = rand() % valid_action_count;
+
+		if (pop_low > 0 && r < pop_low)
 		{
-			if (action & validAction)
-			{
-				// std::cerr << mtos(action, 81) << std::endl;
-				--randIndex;
-			}
-			action <<= 1;
-		}
-		// std::cerr << "action send  = " << mtos(action, 81) << std::endl;
-		return action;
-	}
-
-	template<class T>
-	void play(T t) = delete;
-
-	void play(Mask128 action)
-	{
-		// int actionIndex = actionIndex(action);
-		// if (actionIndex > 80)
-		// {
-		// 	std::cerr << "wtf action = " << actionIndex << std::endl;
-		// 	exit(0);
-		// }
-
-		// std::cerr << "Play" << std::endl;
-
-		// std::cerr << "action is	= " << mtos(action, 81) << std::endl;
-
-		int smallBoardIndex = (int128_ffs(action) - 1) / 9;
-
-		if (myTurn)
-		{
-			// if (oppBoard & action)
-			// {
-			// 	std::cerr << "action non disponible" << std::endl;
-			// 	std::cerr << "freeCell	= " << mtos(~(nonFreeCell | myBoard | oppBoard), 81) << std::endl;
-			// 	std::cerr << "validAction = " << mtos(validAction, 81) << std::endl;
-			// 	std::cerr << "action	  = " << mtos(action, 81) << std::endl;
-			// 	std::cerr << "oppBoard	= " << mtos(oppBoard, 81) << std::endl;
-			// 	exit(0);
-			// }
-			myBoard |= action;
-			int result = boardIsFinal(getUniqueSmallBoard(myBoard, smallBoardIndex));
-			if (result)
-			{
-				myBigBoard |= result << smallBoardIndex;
-				nonFreeCell |= smallBoardMask(smallBoardIndex);
-			}
+			return (Mask128)_pdep_u64(1ULL << r, low);
 		}
 		else
 		{
-			// if (myBoard & action)
-			// {
-			// 	std::cerr << "action non disponible" << std::endl;
-			// 	std::cerr << "freeCell	= " << mtos(~(nonFreeCell | myBoard | oppBoard), 81) << std::endl;
-			// 	std::cerr << "validAction = " << mtos(validAction, 81) << std::endl;
-			// 	std::cerr << "action	  = " << mtos(action, 81) << std::endl;
-			// 	std::cerr << "myBoard	 = " << mtos(myBoard, 81) << std::endl;
-			// 	exit(0);
-			// }
-			oppBoard |= action;
-			int result = boardIsFinal(getUniqueSmallBoard(oppBoard, smallBoardIndex));
-			if (result)
-			{
-				oppBigBoard |= result << smallBoardIndex;
-				nonFreeCell |= smallBoardMask(smallBoardIndex);
-			}
+			return (Mask128)_pdep_u64(1ULL << (r - pop_low), high) << 64;
 		}
-		nonFreeCell |= action;
-
-		depth++;
-		myTurn = !myTurn;
-		lastAction = action;
-		validActionCount = 0;
-		validActionComputed = false;
-		// log();
-		computeValidAction();
 	}
 
-	bool final()
+	void play(Mask128 action)
 	{
-		return validActionCount == 0 || boardIsFinal(myBigBoard) || boardIsFinal(oppBigBoard);
+		last_action_index = action_index(action);
+		const int small_board_index = last_action_index / 9;
+
+		Mask128 &working_board = my_turn ? my_board : opp_board;
+
+		working_board |= action;
+		if (is_board_final(get_small_board(working_board, small_board_index)))
+		{
+			working_board |= int128(1) << (small_board_index + 81);
+			working_board |= get_small_board_mask(small_board_index);
+		}
+
+		my_turn = !my_turn;
+		
+		
+		// cumule finished small board with the two players board
+		const Mask128 free_cell_mask = (~(my_board | opp_board)) & board_mask;
+
+		// get valid action by filtering only the free cells in the small board where you are forced to play
+		const Mask128 force_play = get_small_board_mask(last_action_index % 9);
+		valid_action = free_cell_mask & force_play;
+
+		// if there is no valid action: play where you want
+		if (!valid_action) valid_action = free_cell_mask;
+
+		valid_action_count = popcount128(valid_action);
 	}
 
-	float result()
+	bool is_final()
 	{
-		if (boardIsFinal(myBigBoard))
-			return 1;
-		if (boardIsFinal(oppBigBoard))
-			return 0;
-		int diff = __builtin_popcount(myBigBoard) - __builtin_popcount(oppBigBoard);
-		if (diff > 0)
-			return 1;
-		if (diff < 0)
-			return 0;
-		return 0.5;
+		return valid_action_count == 0 || is_board_final(get_big_board(my_board)) || is_board_final(get_big_board(opp_board));
+	}
+
+	bool rollout_should_stop()
+	{
+		// stop rollout if game is final or if opponent has more big cells than me
+		return is_final() || __builtin_popcountll(get_big_board(opp_board)) > __builtin_popcountll(get_big_board(my_board));
+	}
+
+	float score()
+	{
+		if (!is_board_final(get_big_board(my_board))
+			&& !is_board_final(get_big_board(opp_board))
+			&& __builtin_popcountll(get_big_board(opp_board)) == __builtin_popcountll(get_big_board(my_board)))
+			return 0.5;
+		return 1.0;
 	}
 
 	void log()
 	{
-		string str(
+		char str[242] = (
 			". . . | . . . | . . .\n"
 			". . . | . . . | . . .\n"
 			". . . | . . . | . . .\n"
@@ -435,156 +297,167 @@ struct Game
 			". . . | . . . | . . .\n"
 			". . . | . . . | . . ."
 		);
-		Mask128 myBoardTmp = myBoard;
-		Mask128 oppBoardTmp = oppBoard;
+		Mask128 my_board_tmp = my_board;
+		Mask128 opp_board_tmp = opp_board;
 		for (size_t i = 0; i < 81; i++)
 		{
-
-			if ((myBigBoard >> (i / 9)) & 1)
-			{
-				if (i % 9 != 4)
-					str[gameIndexToStrIndex[i]] = 'o';
-				else
-					str[gameIndexToStrIndex[i]] = ' ';
-			}
-			else if ((oppBigBoard >> (i / 9)) & 1)
-			{
-				if (i % 9 == 0 || i % 9 == 2 || i % 9 == 4|| i % 9 == 6 || i % 9 == 8)
-					str[gameIndexToStrIndex[i]] = 'x';
-				else
-					str[gameIndexToStrIndex[i]] = ' ';
-			}
-			else if (myBoardTmp & 1)
-				str[gameIndexToStrIndex[i]] = 'o';
-			else if (oppBoardTmp & 1)
-				str[gameIndexToStrIndex[i]] = 'x';
+			// if ((my_big_board >> (i / 9)) & 1)
+			// {
+			// 	if (i % 9 != 4)
+			// 		str[game_index_to_str_index[i]] = 'o';
+			// 	else
+			// 		str[game_index_to_str_index[i]] = ' ';
+			// }
+			// else if ((opp_big_board >> (i / 9)) & 1)
+			// {
+			// 	if (i % 9 == 0 || i % 9 == 2 || i % 9 == 4|| i % 9 == 6 || i % 9 == 8)
+			// 		str[game_index_to_str_index[i]] = 'x';
+			// 	else
+			// 		str[game_index_to_str_index[i]] = ' ';
+			// }
+			if (my_board_tmp & 1)
+				str[game_index_to_str_index[i]] = 'o';
+			else if (opp_board_tmp & 1)
+				str[game_index_to_str_index[i]] = 'x';
 			
-			myBoardTmp >>= 1;
-			oppBoardTmp >>= 1;
+			my_board_tmp >>= 1;
+			opp_board_tmp >>= 1;
 		}
-		int actionIndex = actionIndex(lastAction);
-		std::cerr << "myTurn = " << myTurn << "  lastAction = " << (actionIndex != -1 ? indexToPos[actionIndex] : "none") << std::endl;
+		std::cerr << "my_turn = " << bool(my_turn) << "  last_action = " << (last_action_index != -1 ? index_to_pos[last_action_index] : "none") << std::endl;
 		std::cerr << str << std::endl;
 	}
 };
 
 struct State
 {
-	float value;
-	int visitCount;
 	Game game;
-	State *parent;
-	vector<State *> children;
-	int id;
+	State * parent = NULL;
+	State * children = NULL;
+	int children_count = 0;
+	float score = 0;
+	int visit_count = 0;
 
-	State(Game __game, State *__parent) : value(0), visitCount(0), game(__game), parent(__parent), id(stateId++) {}
+	State(Game __game = Game(0, 0, 0, -1), State * __parent = NULL):
+		game(__game), parent(__parent) {}
+
 	~State()
 	{
-		for (size_t i = 0; i < children.size(); i++)
-			delete children[i];
+		// for (size_t i = 0; i < children_count; i++)
+		// 	delete children[i];
+		// delete[] children;
 	}
 
-	State *expand()
+	State * expand()
 	{
 		// if final state return current state
-		if (game.final())
+		if (game.is_final())
 			return this;
 
 		// create games for each valid action
-		vector<Game> nextGame;
-		int actionList[81];
-		Game g = game;
-		game.getActionList(actionList);
-		for (size_t i = 0; i < game.validActionCount; i++)
+		Game next_game[81];
+		Mask128 action_list[81];
+		Game g;
+		game.get_action_list(action_list);
+		for (size_t i = 0; i < game.valid_action_count; i++)
 		{
 			g = game;
-			g.play(actionMask(actionList[i]));
-			nextGame.push_back(g);
+			g.play(action_list[i]);
+			next_game[i] = g;
 		}
 		
-		// detect if there is a final state
-		Game *finalGame = NULL;
-		for (size_t i = 0; i < game.validActionCount; i++)
+		// detect if there is a winning final state
+		Game *winning_final_game = NULL;
+		for (size_t i = 0; i < game.valid_action_count; i++)
 		{
-			if (nextGame[i].final())
+			if (next_game->is_final() && next_game[i].score() > 0.8)
 			{
-				finalGame = &nextGame[i];
+				winning_final_game = &next_game[i];
 				break;
 			}
 		}
 
-		// if there is a final state: expand only this one
-		if (finalGame != NULL)
+		// if there is a winning final state: expand only this one
+		if (winning_final_game != NULL)
 		{
-			children.push_back(new State(*finalGame, this));
+			// allocate memory for children
+			children_count = 1;
+			children = new State[children_count];
+
+			children[0] = State(*winning_final_game, this);
 		}
 		// else: expand all next state
 		else
 		{
-			for (size_t i = 0; i < nextGame.size(); i++)
-				children.push_back(new State(nextGame[i], this));
+			// allocate memory for children
+			children_count = 0;
+			children = new State[game.valid_action_count];
+
+			for (size_t i = 0; i < game.valid_action_count; i++)
+			{
+				// don't expand the losing final state
+				if (next_game[i].is_final() && next_game[i].score() == 0)
+				// if (next_game[i].count_big_cells(next_game[i].my_board) < next_game[i].count_big_cells(next_game[i].opp_board))
+					continue;
+				children[children_count++] = State(next_game[i], this);
+			}
 		}
-		return children[0];
+		return children;
 	}
 
 	float UCB1()
 	{
-		if (parent == NULL)
-			return -1;
-		
-		if (visitCount == 0)
+		if (visit_count == 0)
 			return __builtin_huge_valf();
 		
-		return (value / visitCount) + 25 * sqrt(::log(parent->visitCount) / visitCount);
+		return (score / visit_count) + 2 * sqrt(::log(parent->visit_count) / visit_count);
 	}
 
-	State *maxUCB1Child()
+	State * max_UCB1_child()
 	{
-		State *child = NULL;
-		float maxUCB1 = 0;
-		for (size_t i = 0; i < children.size(); i++)
+		State * child = NULL;
+		float max_UCB1 = 0;
+		for (size_t i = 0; i < children_count; i++)
 		{
-			float UCB1 = children[i]->UCB1();
-			if (UCB1 > maxUCB1)
+			const float UCB1 = children[i].UCB1();
+			if (UCB1 > max_UCB1)
 			{
-				maxUCB1 = UCB1;
-				child = children[i];
+				max_UCB1 = UCB1;
+				child = children + i;
 			}
 		}
 		return child;
 	}
 
-	void backpropagate(float __value, State *root)
+	void backpropagate(const float new_score, const State * root)
 	{
-		visitCount++;
-		value += __value;
+		visit_count++;
+		score += new_score;
 		if (parent != NULL && this != root)
-			parent->backpropagate(__value, root);
+			parent->backpropagate(1.0 - new_score, root);
 	}
 
 	float rollout()
 	{
 		Game g = game;
-		while (!g.final())
+		// while (!g.rollout_should_stop())
+		while (!g.is_final())
 		{
-			g.play(g.randAction());
+			g.play(g.rand_action());
 		}
-		return g.result();
+		return (g.my_turn == game.my_turn) ? g.score() : 1 - g.score();
 	}
 
-	State *maxAverageValueChild()
+	State * best_child()
 	{
-		if (children.empty())
-			return NULL;
-		State *child = children[0];
-		float maxAverageValue = -1;
-		for (size_t i = 0; i < children.size(); i++)
+		State *child = children;
+		float max_average_score = -1;
+		for (size_t i = 0; i < children_count; i++)
 		{
-			float averageValue = children[i]->value / children[i]->visitCount;
-			if (averageValue > maxAverageValue)
+			const float average_score = children[i].score / children[i].visit_count;
+			if (average_score > max_average_score)
 			{
-				maxAverageValue = averageValue;
-				child = children[i];
+				max_average_score = average_score;
+				child = &children[i];
 			}
 		}
 		return child;
@@ -592,26 +465,25 @@ struct State
 
 	void log()
 	{
-		std::cerr << "State{t=" << setw(7) << left << value <<
-			",n=" << setw(5) << left << visitCount <<
-			",av=" << setw(10) << left << value / visitCount <<
-			",action=" << (game.lastAction != -1 ? indexToPos[actionIndex(game.lastAction)] : "none") <<
+		std::cerr << "State{t=" << setw(7) << left << score <<
+			",n=" << setw(5) << left << visit_count <<
+			",av=" << setw(10) << left << score / visit_count <<
+			",action=" << (game.last_action_index != -1 ? index_to_pos[game.last_action_index] : "none") <<
 			"}" << std::endl;
 	}
-
 };
 
-State *opponentPlay(State *state, Mask128 action)
+State * opponentPlay(State * state, int8_t action)
 {
-	for (size_t i = 0; i < state->children.size(); i++)
+	for (size_t i = 0; i < state->children_count; i++)
 	{
-		if (action == state->children[i]->game.lastAction)
-			return state->children[i];
+		if (action == state->children[i].game.last_action_index)
+			return &(state->children[i]);
 	}
-	std::cerr << "Invalid action " << actionIndex(action) << " in:" << std::endl;
-	for (size_t i = 0; i < state->children.size(); i++)
+	std::cerr << "Invalid action " << int(action) << " in:" << std::endl;
+	for (size_t i = 0; i < state->children_count; i++)
 	{
-		std::cerr << actionIndex(state->children[i]->game.lastAction) << " ";
+		std::cerr << int(state->children[i].game.last_action_index) << " ";
 	}
 	std::cerr << std::endl;
 	state->game.log();
@@ -619,11 +491,15 @@ State *opponentPlay(State *state, Mask128 action)
 	return state;
 }
 
-void readInput(Mask128 &oppAction, int *validAction)
+void readInput(int8_t & opp_action, int * valid_action)
 {
 	int opp_row; int opp_col;
 	cin >> opp_row >> opp_col; cin.ignore();
-	oppAction = int128(1) << (opp_row == -1 ? -1 : posToIndex[opp_row][opp_col]);
+	if (opp_row == -1)
+		opp_action = -1;
+	else
+		opp_action = pos_to_index[opp_row][opp_col];
+	// std::cerr << mtos(opp_action, 81) << std::endl;
 
 	int valid_action_count;
 	cin >> valid_action_count; cin.ignore();
@@ -631,165 +507,180 @@ void readInput(Mask128 &oppAction, int *validAction)
 	{
 		int row; int col;
 		cin >> row >> col; cin.ignore();
-		validAction[i] = posToIndex[row][col];
+		valid_action[i] = pos_to_index[row][col];
 	}
 }
 
-void generateInput(State *current, Mask128 &oppAction, int *validAction)
+void generateInput(State * current, int8_t & opp_action, int * valid_action)
 {
-	oppAction = current->game.randAction();
+	opp_action = current->children[random(0, current->children_count)].game.last_action_index;
 }
 
-State *mcts(State *initialState, Timer start, float timeout)
+void generateFirstInput(State * current, int8_t & opp_action, int * valid_action)
 {
-	State *current;
-	int nbOfSimule = 0;
+	opp_action = -1;
+	// opp_action = action_index(current->game.rand_action());
+}
+
+State * mcts(State * initial_state, Timer start, float timeout)
+{
+	State * current;
+	int nb_of_simule = 0;
+
+	Timer total_time; double total_time_sum;
+	Timer tree_traversal_time; double tree_traversal_time_sum;
+	Timer expand_time; double expand_time_sum;
+	Timer rollout_time; double rollout_time_sum;
+	Timer backprobagate_time; double backprobagate_time_sum;
 
 	while (true)
 	{
+		current = initial_state;
+
+		total_time.set();
+
+		tree_traversal_time.set();
+		while (current->children_count > 0)
+			current = current->max_UCB1_child();
+		tree_traversal_time_sum += tree_traversal_time.diff(false);
+		
+		expand_time.set();
+		if (current->visit_count > 0)
+			current = current->expand();
+		expand_time_sum += expand_time.diff(false);
+		
+		rollout_time.set();
+		const float score = current->rollout();
+		rollout_time_sum += rollout_time.diff(false);
+		
+		backprobagate_time.set();
+		current->backpropagate(score, initial_state);
+		backprobagate_time_sum += backprobagate_time.diff(false);
+
+		total_time_sum += total_time.diff(false);
+		
+		nb_of_simule++;
+
 		double diff = start.diff(false);
 		if (diff > timeout)
 			break;
-
-		current = initialState;
-
-		timer.set();
-		while (!current->children.empty())
-			current = current->maxUCB1Child();
-
-		if (current->visitCount > 0)
-			current = current->expand();
-
-		float value = current->rollout();
-
-		current->backpropagate(value, initialState);
-
-		nbOfSimule++;
 	}
-	std::cerr << "nb of simule = " << nbOfSimule << std::endl;
-	return initialState->maxAverageValueChild();
+
+	std::cerr << "Simulation result:" << std::endl;
+	std::cerr << "count = " << nb_of_simule << std::endl;
+	std::cerr << "time = " << start.diff() << std::endl;
+	double total_time_avg = total_time_sum / nb_of_simule * 1000;
+	double tree_traversal_time_avg = tree_traversal_time_sum / nb_of_simule * 1000;
+	double expand_time_avg = expand_time_sum / nb_of_simule * 1000;
+	double rollout_time_avg = rollout_time_sum / nb_of_simule * 1000;
+	double backprobagate_time_avg = backprobagate_time_sum / nb_of_simule * 1000;
+	std::cerr << "total time avg           = " << total_time_avg << " ms" << std::endl;
+	std::cerr << "tree traversal time avg  = " << tree_traversal_time_avg << " ms (" << (tree_traversal_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+	std::cerr << "expand time avg          = " << expand_time_avg << " ms (" << (expand_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+	std::cerr << "rollout time avg         = " << rollout_time_avg << " ms (" << (rollout_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+	std::cerr << "backprobagate time avg   = " << backprobagate_time_avg << " ms (" << (backprobagate_time_avg / total_time_avg) * 100 << "%)" << std::endl;
+
+	State * best_child = initial_state->best_child();
+	// std::cerr << "best move: " << index_to_pos[best_child->game.last_action_index] << std::endl;
+	// std::cerr << "best opponent move: " << index_to_pos[best_child->best_child()->game.last_action_index] << std::endl;
+
+	return best_child;
 }
 
-State *mcts(State *initialState, int maxIter)
-{
-	State *current;
-	int nbOfSimule = 0;
 
-	while (nbOfSimule < maxIter)
-	{
+// int main()
+// {
+// 	srand(time(NULL));
 
-		current = initialState;
+// 	Game game = Game(0, 0, 0, -1);
+// 	game.compute_first_valid_action();
 
-		while (!current->children.empty())
-			current = current->maxUCB1Child();
+// 	State * state = new State(game, NULL);
 
-		if (current->visitCount > 0)
-			current = current->expand();
+// 	Timer start;
 
-		float value = current->rollout();
+// 	State * child = mcts(state, start, 1000);
 
-		current->backpropagate(value, initialState);
+// 	delete state;
+// 	return 0;
+// }
 
-		nbOfSimule++;
-	}
-	std::cerr << "nb of simule = " << nbOfSimule << std::endl;
-	return initialState->maxAverageValueChild();
-}
 
-int main(int ac, char *av[])
-{
-
-	srand(time(NULL));
-
-	Game game = Game(0, 0, 0, 0, 0, -1, 0);
-
-	// game.play(actionMask(40));
-
-	State *state = new State(game, NULL);
-
-	Timer start;
-
-	State *child = mcts(state, start, 1000);
-	std::cerr << "Simulation time = " << start.diff() << std::endl;
-	// child->game.log();
-
-	// while (!game.final())
-	// {
-	// 	std::cerr << "- NEXT TURN -" << std::endl;
-	// 	game.play(game.randAction());
-	// 	string str;
-	// 	getline(cin, str);
-	// }
-
-	// delete state;
-	return 0;
-}
-/*
 int main()
 {
 	srand(time(NULL));
 
-	Mask128 oppAction;
-	int validAction[81];
+	int8_t opp_action = -1;
+	int valid_action[81];
 
-	Game initialGame = Game(0, 0, 0, 0, 0, -1, 0);
-	State *initialState = new State(initialGame, NULL);
+	Game initial_game = Game(0, 0, 0, -1);
+	initial_game.compute_first_valid_action();
+	State *initial_state = new State(initial_game, NULL);
 
-	State *current = initialState;
+	State *current = initial_state;
 
-	int first = true;
-	while (1)
-	{
-
-		if (current->game.final())
-		{
-			std::cerr << "result = " << current->game.result() << std::endl;
-			delete initialState;
-			return 0;
-		}
-
-		// readInput(oppAction, validAction);
-		generateInput(current, oppAction, validAction);
+	{ // first turn
+		readInput(opp_action, valid_action);
+		// generateFirstInput(current, opp_action, valid_action);
 		Timer start;
-
-		if (current->game.final())
+	
+		if (opp_action != -1)
+			current->game.play(action_mask(opp_action));
+		else
+			current->game.my_turn = 1;
+	
+		State *child = mcts(current, start, 990);
+	
+		if (child == NULL)
 		{
-			std::cerr << "result = " << current->game.result() << std::endl;
-			delete initialState;
-			return 0;
-		}
-
-		if (first)
-		{
-			if (oppAction != -1)
-				current->game.play(oppAction);
-			else
-				current->game.myTurn = 1;
+			std::cerr << "mcts did not return any action" << std::endl;
+			cout << index_to_pos[valid_action[0]] << std::endl;
+			current = opponentPlay(current, valid_action[0]);
 		}
 		else
 		{
-			current = opponentPlay(current, oppAction);
+			cout << index_to_pos[child->game.last_action_index] << std::endl;
+			std::cerr << "response time " << start.diff() << std::endl;
+			current = child;
 		}
+		// current->game.log();
+		std::cerr << std::endl;
+	}
 
-		// my play
-		State *child = mcts(current, start, first ? 990 : 90);
+	while (1)
+	{
+		if (current->game.is_final())
+			break;
 
-		std::cerr << "simule time " << start.diff() << std::endl;
+		readInput(opp_action, valid_action);
+		// generateInput(current, opp_action, valid_action);
+		Timer start;
+
+		if (current->game.is_final())
+			break;
+
+		current = opponentPlay(current, opp_action);
+
+		// current->game.log();
+		State *child = mcts(current, start, 90);
 
 		if (child == NULL)
 		{
 			std::cerr << "mcts did not return any action" << std::endl;
-			cout << indexToPos[validAction[0]] << std::endl;
-			current = opponentPlay(current, validAction[0]);
+			cout << index_to_pos[valid_action[0]] << std::endl;
+			current = opponentPlay(current, valid_action[0]);
 		}
 		else
 		{
-			cout << indexToPos[actionIndex(child->game.lastAction)] << std::endl;
+			cout << index_to_pos[child->game.last_action_index] << std::endl;
+			std::cerr << "response time " << start.diff() << std::endl;
 			current = child;
 		}
-		current->game.log();
+		// current->game.log();
 		std::cerr << std::endl;
-		first = false;
 	}
+
+	std::cerr << "score = " << current->game.score() << std::endl;
+	delete initial_state;
 }
-*/
+

@@ -138,6 +138,18 @@ const int pos_to_index[9][9] = {
 	{60, 61, 62, 69, 70, 71, 78, 79, 80},
 };
 
+const Mask128 validate_big_cell[9] = {
+	(int128(1) << (0 + 81)) | get_small_board_mask(0),
+	(int128(1) << (1 + 81)) | get_small_board_mask(1),
+	(int128(1) << (2 + 81)) | get_small_board_mask(2),
+	(int128(1) << (3 + 81)) | get_small_board_mask(3),
+	(int128(1) << (4 + 81)) | get_small_board_mask(4),
+	(int128(1) << (5 + 81)) | get_small_board_mask(5),
+	(int128(1) << (6 + 81)) | get_small_board_mask(6),
+	(int128(1) << (7 + 81)) | get_small_board_mask(7),
+	(int128(1) << (8 + 81)) | get_small_board_mask(8)
+};
+
 int rotation = -1;
 
 uint_fast8_t ffs128(__int128_t n)
@@ -369,10 +381,9 @@ struct RandGame
 			
 			if (!valid_action) valid_action = free_cell_mask;
 			
-			
+			// Check if game is finished
 			if (free_cell_mask == 0 || is_board_final(get_big_board(prev_board)))
 				break;
-
 
 			// Choose a random action from the valid actions
 			const uint64_t low = (uint64_t)valid_action;
@@ -382,15 +393,10 @@ struct RandGame
 	
 			Mask128 rand_action = 0;
 			if (pop_low > 0 && r < pop_low)
-			{
 				rand_action = (Mask128)_pdep_u64(1ULL << r, low);
-			}
 			else
-			{
 				rand_action = (Mask128)_pdep_u64(1ULL << (r - pop_low), high) << 64;
-			}
 
-			
 			// Play the random action
 			last_action_index = action_index(rand_action);
 			const int small_board_index = last_action_index / 9;
@@ -398,8 +404,7 @@ struct RandGame
 			current_board |= rand_action;
 			if (is_board_final(get_small_board(current_board, small_board_index)))
 			{
-				current_board |= int128(1) << (small_board_index + 81);
-				current_board |= get_small_board_mask(small_board_index);
+				current_board |= validate_big_cell[small_board_index];
 			}
 	
 			my_turn = !my_turn;

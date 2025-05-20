@@ -207,8 +207,6 @@ struct Game
 
 	int get_action_list(Mask128 action_list[81])
 	{
-		// compute_valid_action();
-
 		int i = 0;
 		Mask128 valid_action_copy = valid_action;
 		while (valid_action_copy)
@@ -221,8 +219,6 @@ struct Game
 
 	Mask128 rand_action()
 	{
-		// compute_valid_action();
-
 		const uint64_t low = (uint64_t)valid_action;
 		const uint64_t high = (uint64_t)(valid_action >> 64);
 		const uint64_t pop_low = __builtin_popcountll(low);
@@ -321,6 +317,106 @@ struct Game
 		}
 		std::cerr << "my_turn = " << bool(my_turn) << "  last_action = " << (last_action_index != -1 ? index_to_pos[last_action_index] : "none") << std::endl;
 		std::cerr << str << std::endl;
+	}
+};
+
+struct RandGame
+{
+	Mask128 current_board = 0;
+	Mask128 prev_board = 0;
+	int8_t last_action_index = -1;
+	int8_t my_turn = 0;
+
+	RandGame(const Game & game):
+		current_board(game.my_board),
+		prev_board(game.opp_board),
+		last_action_index(game.last_action_index),
+		my_turn(game.my_turn)
+	{
+		if (my_turn)
+		{
+			current_board = game.my_board;
+			prev_board = game.opp_board;
+		}
+		else
+		{
+			current_board = game.opp_board;
+			prev_board = game.my_board;
+		}
+	}
+
+	int is_board_final(Mask16 board)
+	{
+		return ((board & test_ABC) == test_ABC) ||
+				((board & test_DEF) == test_DEF) ||
+				((board & test_GHI) == test_GHI) ||
+				((board & test_ADG) == test_ADG) ||
+				((board & test_BEH) == test_BEH) ||
+				((board & test_CFI) == test_CFI) ||
+				((board & test_AEI) == test_AEI) ||
+				((board & test_CEG) == test_CEG);
+	}
+
+	void randPlay()
+	{
+		for (;;)
+		{
+			// Compute valid actions
+			const Mask128 free_cell_mask = (~(current_board | prev_board)) & board_mask;
+			
+			const Mask128 force_play = get_small_board_mask(last_action_index % 9);
+			Mask128 valid_action = free_cell_mask & force_play;
+			
+			if (!valid_action) valid_action = free_cell_mask;
+			
+			
+			if (free_cell_mask == 0 || is_board_final(get_big_board(prev_board)))
+				break;
+
+
+			// Choose a random action from the valid actions
+			const uint64_t low = (uint64_t)valid_action;
+			const uint64_t high = (uint64_t)(valid_action >> 64);
+			const uint64_t pop_low = __builtin_popcountll(low);
+			const uint64_t r = rand() % (pop_low + __builtin_popcountll(high));
+	
+			Mask128 rand_action = 0;
+			if (pop_low > 0 && r < pop_low)
+			{
+				rand_action = (Mask128)_pdep_u64(1ULL << r, low);
+			}
+			else
+			{
+				rand_action = (Mask128)_pdep_u64(1ULL << (r - pop_low), high) << 64;
+			}
+
+			
+			// Play the random action
+			last_action_index = action_index(rand_action);
+			const int small_board_index = last_action_index / 9;
+
+			current_board |= rand_action;
+			if (is_board_final(get_small_board(current_board, small_board_index)))
+			{
+				current_board |= int128(1) << (small_board_index + 81);
+				current_board |= get_small_board_mask(small_board_index);
+			}
+	
+			my_turn = !my_turn;
+			
+			Mask128 tmp = current_board;
+			current_board = prev_board;
+			prev_board = tmp;
+		}
+	}
+
+	float score()
+	{
+		if (!is_board_final(get_big_board(current_board))
+			&& !is_board_final(get_big_board(prev_board))
+			&& __builtin_popcountll(get_big_board(prev_board)) == __builtin_popcountll(get_big_board(current_board)))
+			return 0.5;
+		return 1.0;
 	}
 };
 
@@ -434,13 +530,9 @@ struct State
 
 	float rollout()
 	{
-		Game g = game;
-		// while (!g.rollout_should_stop())
-		while (!g.is_final())
-		{
-			g.play(g.rand_action());
-		}
-		return (g.my_turn == game.my_turn) ? g.score() : 1 - g.score();
+		RandGame rand_game = game;
+		rand_game.randPlay();
+		return (rand_game.my_turn == game.my_turn) ? rand_game.score() : 1 - rand_game.score();
 	}
 
 	State * best_child()
@@ -527,8 +619,8 @@ void generateInput(State * current, int8_t & opp_action, int * valid_actions)
 
 void generateFirstInput(State * current, int8_t & opp_action, int * valid_actions)
 {
-	opp_action = -1;
-	// opp_action = 40;
+	// opp_action = -1;
+	opp_action = 40;
 }
 
 State * mcts(State * initial_state, Timer start, float timeout)
@@ -597,25 +689,20 @@ State * mcts(State * initial_state, Timer start, float timeout)
 }
 
 
-// int main()
-// {
-// 	srand(time(NULL));
+int main()
+{
+	srand(time(NULL));
+	Game game = Game();
+	game.valid_action = action_mask(40);
+	game.valid_action_count = 1;
+	State * state = new State(game, NULL);
+	Timer start;
+	State * child = mcts(state, start, 1000);
+	delete state;
+	return 0;
+}
 
-// 	Game game = Game();
-// 	game.valid_action = action_mask(40);
-// 	game.valid_action_count = 1;
-
-// 	State * state = new State(game, NULL);
-
-// 	Timer start;
-
-// 	State * child = mcts(state, start, 1000);
-
-// 	delete state;
-// 	return 0;
-// }
-
-
+/*
 int main()
 {
 	srand(time(NULL));
@@ -655,9 +742,9 @@ int main()
 
 			if (opp_action == 40) // if opponent play at the center, restrict the valid action
 			{
-				current->game.valid_action = action_mask(36) | action_mask(37);
-				// current->game.valid_action = action_mask(36);
-				current->game.valid_action_count = 2;
+				// current->game.valid_action = action_mask(36) | action_mask(37);
+				current->game.valid_action = action_mask(36);
+				current->game.valid_action_count = 1;
 			}
 		}
 	
@@ -665,13 +752,19 @@ int main()
 
 		if (opp_action == -1)
 		{
-			std::cerr << "children visit count: " << current->children[0].children[0].visit_count << std::endl;
-			std::cerr << "children visit count: " << current->children[0].children[1].visit_count << std::endl;
+			std::cerr << "Opp first plays visit count:" << std::endl;
+			for (size_t i = 0; i < current->children[0].children_count; i++)
+			{
+				std::cerr << "   " << int(current->children[0].children[i].game.last_action_index) << " " << current->children[0].children[i].visit_count << std::endl;
+			}
 		}
 		else
 		{
-			std::cerr << "children visit count: " << current->children[0].visit_count << std::endl;
-			std::cerr << "children visit count: " << current->children[1].visit_count << std::endl;
+			std::cerr << "My first plays visit count:" << std::endl;
+			for (size_t i = 0; i < current->children_count; i++)
+			{
+				std::cerr << "   " << int(current->children[i].game.last_action_index) << " " << current->children[i].visit_count << std::endl;
+			}
 		}
 	
 		if (child == NULL)
@@ -770,4 +863,4 @@ int main()
 
 	delete initial_state;
 }
-
+*/

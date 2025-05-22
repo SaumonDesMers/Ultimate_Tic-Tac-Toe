@@ -183,6 +183,12 @@ void print_binary(T x, int width = sizeof(T) * 8)
 
 struct Game
 {
+	enum Result {
+		WIN,
+		LOSE,
+		DRAW
+	};
+
 	Mask128 my_board = 0;
 	Mask128 opp_board = 0;
 	Mask128 valid_action = 0;
@@ -267,8 +273,7 @@ struct Game
 
 	bool is_final()
 	{
-		const Mask128 free_cell_mask = (~(my_board | opp_board)) & board_mask;
-		return free_cell_mask == 0 || is_board_final(get_big_board(my_board)) || is_board_final(get_big_board(opp_board));
+		return valid_action_count == 0 || is_board_final(get_big_board(my_board)) || is_board_final(get_big_board(opp_board));
 	}
 
 	bool rollout_should_stop()
@@ -284,6 +289,52 @@ struct Game
 			&& __builtin_popcountll(get_big_board(opp_board)) == __builtin_popcountll(get_big_board(my_board)))
 			return 0.5;
 		return 1.0;
+	}
+
+	Result minimax(int depth)
+	{
+		if (is_final())
+		{
+			if (score() > 0.9)
+			{
+				return LOSE;
+			}
+			return DRAW;
+		}
+		
+		if (depth == 0)
+		{
+			return DRAW;
+		}
+
+		int opp_win_count = 0;
+		Mask128 valid_action_copy = valid_action;
+		for (size_t i = 0; i < valid_action_count; i++)
+		{
+			const Mask128 action = valid_action_copy & -valid_action_copy;
+			valid_action_copy &= (valid_action_copy - 1);
+
+			Game next_game = *this;
+			next_game.play(action);
+
+			const Result opp_result = next_game.minimax(depth - 1);
+
+			if (opp_result == LOSE)
+			{
+				return WIN;
+			}
+			else if (opp_result == WIN)
+			{
+				opp_win_count++;
+			}
+		}
+
+		if (opp_win_count == valid_action_count)
+		{
+			return LOSE;
+		}
+
+		return DRAW;
 	}
 
 	void log()
@@ -331,6 +382,17 @@ struct Game
 		std::cerr << str << std::endl;
 	}
 };
+
+std::ostream & operator<<(std::ostream & os, const Game::Result & result)
+{
+	switch (result)
+	{
+		case Game::WIN: os << "WIN"; break;
+		case Game::LOSE: os << "LOSE"; break;
+		case Game::DRAW: os << "DRAW"; break;
+	}
+	return os;
+}
 
 struct RandGame
 {
@@ -537,6 +599,11 @@ struct State
 	{
 		RandGame rand_game = game;
 		rand_game.randPlay();
+		// Game rand_game = game;
+		// while (!rand_game.is_final())
+		// {
+		// 	rand_game.play(rand_game.rand_action());
+		// }
 		return (rand_game.my_turn == game.my_turn) ? rand_game.score() : 1 - rand_game.score();
 	}
 
@@ -596,8 +663,6 @@ void readInput(int8_t & opp_action, int * valid_actions)
 		int new_row = opp_row, new_col = opp_col;
 		switch (rotation)
 		{
-			// case -1: break; // no rotation
-			// case 0: break; // no rotation
 			case 1: new_row = 8 - opp_col; new_col = opp_row;     break; // 90° clockwise
 			case 2: new_row = 8 - opp_row; new_col = 8 - opp_col; break; // 180° clockwise
 			case 3: new_row = opp_col;     new_col = 8 - opp_row; break; // 270° clockwise
@@ -694,20 +759,20 @@ State * mcts(State * initial_state, Timer start, float timeout)
 }
 
 
-int main()
-{
-	srand(time(NULL));
-	Game game = Game();
-	game.valid_action = action_mask(40);
-	game.valid_action_count = 1;
-	State * state = new State(game, NULL);
-	Timer start;
-	State * child = mcts(state, start, 1000);
-	delete state;
-	return 0;
-}
+// int main()
+// {
+// 	srand(time(NULL));
+// 	Game game = Game();
+// 	game.valid_action = action_mask(40);
+// 	game.valid_action_count = 1;
+// 	State * state = new State(game, NULL);
+// 	Timer start;
+// 	State * child = mcts(state, start, 1000);
+// 	delete state;
+// 	return 0;
+// }
 
-/*
+
 int main()
 {
 	srand(time(NULL));
@@ -747,31 +812,13 @@ int main()
 
 			if (opp_action == 40) // if opponent play at the center, restrict the valid action
 			{
-				// current->game.valid_action = action_mask(36) | action_mask(37);
-				current->game.valid_action = action_mask(36);
+				current->game.valid_action = action_mask(36);// | action_mask(37);
 				current->game.valid_action_count = 1;
 			}
 		}
 	
-		State *child = mcts(current, start, 990);
+		State *child = mcts(current, start, 990 - start.diff(false));
 
-		if (opp_action == -1)
-		{
-			std::cerr << "Opp first plays visit count:" << std::endl;
-			for (size_t i = 0; i < current->children[0].children_count; i++)
-			{
-				std::cerr << "   " << int(current->children[0].children[i].game.last_action_index) << " " << current->children[0].children[i].visit_count << std::endl;
-			}
-		}
-		else
-		{
-			std::cerr << "My first plays visit count:" << std::endl;
-			for (size_t i = 0; i < current->children_count; i++)
-			{
-				std::cerr << "   " << int(current->children[i].game.last_action_index) << " " << current->children[i].visit_count << std::endl;
-			}
-		}
-	
 		if (child == NULL)
 		{
 			std::cerr << "mcts did not return any action" << std::endl;
@@ -787,8 +834,6 @@ int main()
 			std::cerr << "child action: " << row << " " << col << std::endl;
 			switch (rotation)
 			{
-				// case -1: break; // no rotation
-				// case 0: break; // no rotation
 				case 1: new_row = col;     new_col = 8 - row; break; // 90° clockwise
 				case 2: new_row = 8 - row; new_col = 8 - col; break; // 180° clockwise
 				case 3: new_row = 8 - col; new_col = row;     break; // 270° clockwise
@@ -833,8 +878,11 @@ int main()
 
 		current = opponentPlay(current, opp_action);
 
+		Game::Result result = current->game.minimax(3);
+		std::cerr << "minimax result: " << result << std::endl;
+
 		// current->game.log();
-		State *child = mcts(current, start, 90);
+		State *child = mcts(current, start, 90 - start.diff(false));
 
 		if (child == NULL)
 		{
@@ -851,8 +899,6 @@ int main()
 			std::cerr << "child action: " << row << " " << col << std::endl;
 			switch (rotation)
 			{
-				// case -1: break; // no rotation
-				// case 0: break; // no rotation
 				case 1: new_row = col;     new_col = 8 - row; break; // 90° clockwise
 				case 2: new_row = 8 - row; new_col = 8 - col; break; // 180° clockwise
 				case 3: new_row = 8 - col; new_col = row;     break; // 270° clockwise
@@ -868,4 +914,4 @@ int main()
 
 	delete initial_state;
 }
-*/
+
